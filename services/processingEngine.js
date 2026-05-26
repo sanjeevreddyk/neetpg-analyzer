@@ -42,7 +42,7 @@ function callGeminiAPI(apiKey, promptText) {
     const options = {
       hostname: 'generativelanguage.googleapis.com',
       port: 443,
-      path: `/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
+      path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -109,7 +109,7 @@ function callGeminiMultimodalAPI(apiKey, promptText, pdfBase64) {
     const options = {
       hostname: 'generativelanguage.googleapis.com',
       port: 443,
-      path: `/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
+      path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
