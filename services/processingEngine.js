@@ -878,8 +878,8 @@ Provide the output as a valid JSON array of objects, with exactly this structure
             const imageId = uuidv4();
             const imagePath = `/uploads/images/${questionId}.jpg`;
             const physicalPath = path.join(imageDir, `${questionId}.jpg`);
-            
-            fs.writeFileSync(physicalPath, 'MOCK_IMAGE_BINARY_DATA');
+            const transparentPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+            fs.writeFileSync(physicalPath, Buffer.from(transparentPngBase64, 'base64'));
             
             await dbQuery.run(`
               INSERT INTO Images (
