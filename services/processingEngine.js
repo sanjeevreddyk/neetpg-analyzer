@@ -26,7 +26,7 @@ function logToExecutionFile(level, message, uploadId = 'SYSTEM') {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Native HTTPS helper to query Google Gemini 1.5 Flash API in JSON Mode
+ * Native HTTPS helper to query Google Gemini 2.5 Flash API in JSON Mode
  */
 function callGeminiAPI(apiKey, promptText) {
   return new Promise((resolve, reject) => {
@@ -42,7 +42,7 @@ function callGeminiAPI(apiKey, promptText) {
     const options = {
       hostname: 'generativelanguage.googleapis.com',
       port: 443,
-      path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      path: `/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -85,7 +85,7 @@ function callGeminiAPI(apiKey, promptText) {
 }
 
 /**
- * Native HTTPS helper to query Google Gemini 3.5 Flash API in Multimodal PDF Mode
+ * Native HTTPS helper to query Google Gemini 2.5 Flash API in Multimodal PDF Mode
  */
 function callGeminiMultimodalAPI(apiKey, promptText, pdfBase64) {
   return new Promise((resolve, reject) => {
@@ -109,7 +109,7 @@ function callGeminiMultimodalAPI(apiKey, promptText, pdfBase64) {
     const options = {
       hostname: 'generativelanguage.googleapis.com',
       port: 443,
-      path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      path: `/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -535,20 +535,23 @@ Provide your analysis in JSON format with exactly the following fields:
           
           const promptText = `
 You are an expert clinical medical professor and medical education expert.
-Extract all multiple-choice clinical questions from the attached PDF document.
+Extract ALL multiple-choice clinical questions from the attached PDF document.
+IMPORTANT: Extract the EXACT questions from the PDF. Do NOT make up or generate new questions.
 For each question, extract:
-- Question Number (integer)
+- Question Number (integer, as printed in the PDF)
 - Page Number (integer, 1-indexed)
-- Question Text (string, clean and without watermarks)
-- Options A, B, C, D (strings)
-- Correct Answer (string, letter like "A", "B", "C", "D")
-- Detailed Clinical Explanation (string, explaining why the correct answer is correct and why other options are incorrect)
-- Subject (string, standard medical subject like Anatomy, Physiology, Biochemistry, Pathology, Microbiology, Pharmacology, Forensic Medicine, PSM, ENT, Ophthalmology, Medicine, Surgery, Obstetrics & Gynecology, Pediatrics, Psychiatry, Dermatology, Radiology, Anaesthesia, Orthopaedics)
-- Chapter (string, clinical chapter of the subject)
-- Topic (string, specific medical topic under the chapter)
+- Question Text (string, clean and without watermarks. Copy the text EXACTLY as it appears.)
+- Options A, B, C, D (strings, copy EXACTLY as written)
+- Correct Answer (string, letter like "A", "B", "C", "D" — map from "Ans: 1" → "A", "Ans: 2" → "B", "Ans: 3" → "C", "Ans: 4" → "D")
+- Detailed Clinical Explanation (string, explaining why the correct answer is correct)
+- Subject (string, as printed in the PDF, or classify as standard medical subject)
+- Chapter (string, from Topic field in PDF, or classify)
+- Topic (string, from Sub-Topic field in PDF, or classify)
 - Difficulty Level (string, "Easy", "Medium", or "Hard")
 - Clinical/Conceptual Type (string, "Clinical Scenario", "Conceptual", or "Fact Recall")
 - Question Type (string, "Clinical Scenario", "Single Best Answer", "Image Based", "Assertion Reason", or "Fact Recall")
+- hasImage (boolean, true if the question contains or references a clinical image/diagram/x-ray)
+- imageDescription (string, if hasImage is true, describe what the image shows)
 - Keywords (array of strings, key clinical keywords)
 
 Provide the output as a valid JSON array of objects, with exactly this structure:
@@ -568,7 +571,9 @@ Provide the output as a valid JSON array of objects, with exactly this structure
     "topic": "...",
     "difficulty": "Easy",
     "clinicalType": "Clinical Scenario",
-    "questionType": "Clinical Scenario",
+    "questionType": "Image Based",
+    "hasImage": true,
+    "imageDescription": "Clinical photograph showing...",
     "keywords": ["...", "..."]
   }
 ]
@@ -586,10 +591,12 @@ Provide the output as a valid JSON array of objects, with exactly this structure
               const pageDiagrams = pageDiagramsMap.get(pageNum);
               const actualDiagram = pageDiagrams && pageDiagrams.length > 0 ? pageDiagrams.shift() : null;
               
-              const imagePresent = actualDiagram ? 1 : 0;
+              // Use Gemini's hasImage flag OR check if we extracted a diagram from the page
+              const hasImageFlag = q.hasImage || false;
+              const imagePresent = (actualDiagram || hasImageFlag) ? 1 : 0;
               const imagePath = actualDiagram ? `/uploads/images/${questionId}.png` : null;
               const imageType = /x-ray/i.test(cleanText) ? "X-Ray" : (/histology|biopsy/i.test(cleanText) ? "Histopathology" : "Clinical Diagram");
-              const imageDesc = actualDiagram ? `Visual diagram extracted from PDF Page ${pageNum} for Question ${q.questionNumber}` : null;
+              const imageDesc = q.imageDescription || (actualDiagram ? `Visual diagram extracted from PDF Page ${pageNum} for Question ${q.questionNumber}` : null);
               
               const finalKeywords = Array.isArray(q.keywords) ? q.keywords.join(', ') : (q.keywords || '');
               
@@ -630,7 +637,7 @@ Provide the output as a valid JSON array of objects, with exactly this structure
                 'Gemini AI'
               ]);
               
-              if (imagePresent) {
+              if (actualDiagram) {
                 const imageId = uuidv4();
                 const physicalPath = path.join(imageDir, `${questionId}.png`);
                 fs.writeFileSync(physicalPath, actualDiagram.data);
@@ -658,244 +665,17 @@ Provide the output as a valid JSON array of objects, with exactly this structure
       }
 
       if (!parsedByGemini) {
-        // Fallback to mock / sampleQuestions
-        logToExecutionFile('WARN', `Standard Ques No patterns not found. Proceeding with high-fidelity scaffold simulation for file: ${fileName}`, uploadId);
+        // No text patterns found AND Gemini multimodal failed — cannot fabricate data
+        logToExecutionFile('ERROR', `Could not extract questions from this PDF. Text extraction found no "Ques No:" patterns and AI Multimodal Ingestion also failed. Please check your Gemini API key/quota and try re-uploading.`, uploadId);
         
-        const sampleQuestions = [
-          {
-            Question_Number: 1,
-            Question_Text: "A 45-year-old male presents with history of chest pain radiating to left arm. ECG shows ST-elevation in leads II, III, and aVF. Which of the following coronary arteries is most likely occluded?",
-            Option_A: "Left anterior descending artery",
-            Option_B: "Right coronary artery",
-            Option_C: "Left circumflex artery",
-            Option_D: "Left main coronary artery",
-            Correct_Answer: "B",
-            Answer_Explanation: "ST elevation in leads II, III, and aVF indicates an acute inferior wall myocardial infarction. The inferior wall of the heart is supplied by the Right Coronary Artery (RCA) in approximately 85% of individuals (right-dominant circulation). Therefore, occlusion of the Right Coronary Artery is the most likely cause.",
-            Page_Number: 2,
-            Year: 2024,
-            Confidence: "High"
-          },
-          {
-            Question_Number: 2,
-            Question_Text: "Identify the histological pathology shown in the image below. This biopsy is taken from a patient who presented with painless thyroid swelling and features of hypothyroidism. Note the characteristic Hurthle cells and prominent lymphoid follicles.",
-            Option_A: "Graves Disease",
-            Option_B: "Hashimoto's Thyroiditis",
-            Option_C: "Follicular Adenoma",
-            Option_D: "Papillary Thyroid Carcinoma",
-            Correct_Answer: "B",
-            Answer_Explanation: "Hashimoto's thyroiditis histological findings show intensive lymphocytic infiltration forming lymphoid follicles with germinal centers and Hurthle cells (large eosinophilic follicular cells). Clinical symptoms include painless goiter and hypothyroidism.",
-            Page_Number: 5,
-            Year: 2024,
-            Confidence: "High",
-            Image_Present: true,
-            Image_Type: "Histopathology",
-            Image_Description: "Thyroid gland biopsy showing lymphoid follicle with germinal center and large eosinophilic Hurthle cells."
-          },
-          {
-            Question_Number: 3,
-            Question_Text: "A patient presents with high fever, neck stiffness, and altered mental status. Lumbar puncture reveals high opening pressure, low glucose, highly elevated protein, and neutrophilic pleocytosis. Which of the following is the most likely causative agent?",
-            Option_A: "Streptococcus pneumoniae",
-            Option_B: "Cryptococcus neoformans",
-            Option_C: "Coxsackievirus B",
-            Option_D: "Mycobacterium tuberculosis",
-            Correct_Answer: "A",
-            Answer_Explanation: "The cerebrospinal fluid (CSF) findings of low glucose, elevated protein, and neutrophil predominance (neutrophilic pleocytosis) are classic hallmarks of Acute Bacterial Meningitis. Streptococcus pneumoniae is the most common cause of bacterial meningitis in adults.",
-            Page_Number: 9,
-            Year: 2023,
-            Confidence: "High"
-          },
-          {
-            Question_Number: 4,
-            Question_Text: "An 8-year-old child presents with progressive fatigue, pallor, and bruising. Bone marrow biopsy reveals 25% lymphoblasts expressing TdT and CD10. What is the most likely diagnosis?",
-            Option_A: "Acute Myeloid Leukemia (AML)",
-            Option_B: "Acute Lymphoblastic Leukemia (ALL)",
-            Option_C: "Chronic Myeloid Leukemia (CML)",
-            Option_D: "Hodgkin Lymphoma",
-            Correct_Answer: "B",
-            Answer_Explanation: "Acute Lymphoblastic Leukemia (ALL) is the most common pediatric cancer. T-terminal deoxynucleotidyltransferase (TdT) is a marker for lymphoblasts, and CD10 (CALLA antigen) is positive in common ALL.",
-            Page_Number: 12,
-            Year: 2023,
-            Confidence: "High"
-          },
-          {
-            Question_Number: 5,
-            Question_Text: "A 30-year-old female presents with weakness, ptosis, and diplopia that worsens throughout the day and improves with rest. The pathognomonic autoantibodies in this patient are directed against which of the following receptors?",
-            Option_A: "Voltage-gated calcium channels",
-            Option_B: "Postsynaptic acetylcholine receptors",
-            Option_C: "Ryanodine receptors",
-            Option_D: "GABA-A receptors",
-            Correct_Answer: "B",
-            Answer_Explanation: "The clinical presentation of muscle fatigue worsening with exertion and improving with rest is diagnostic of Myasthenia Gravis. It is caused by autoantibodies targeting the postsynaptic acetylcholine receptors at the neuromuscular junction.",
-            Page_Number: 15,
-            Year: 2024,
-            Confidence: "Medium"
-          },
-          {
-            Question_Number: 6,
-            Question_Text: "What is the diagnosis for the chest radiograph shown here? The patient is a premature infant presenting with severe respiratory distress, retractions, and grunting shortly after birth.",
-            Option_A: "Transient Tachypnea of Newborn",
-            Option_B: "Respiratory Distress Syndrome (RDS)",
-            Option_C: "Meconium Aspiration Syndrome",
-            Option_D: "Congenital Diaphragmatic Hernia",
-            Correct_Answer: "B",
-            Answer_Explanation: "Infant Respiratory Distress Syndrome (RDS) is caused by surfactant deficiency in premature infants. The chest X-ray shows characteristic ground-glass opacities, air bronchograms, and decreased lung volumes.",
-            Page_Number: 18,
-            Year: 2024,
-            Confidence: "High",
-            Image_Present: true,
-            Image_Type: "X-Ray",
-            Image_Description: "Chest radiograph of premature newborn showing fine ground-glass granular opacities and air bronchograms."
-          },
-          {
-            Question_Number: 7,
-            Question_Text: "A patient presents with bilateral hemianopia. Which of the following anatomical structures is most likely compressed by a growing pituitary macro-adenoma?",
-            Option_A: "Optic tract",
-            Option_B: "Optic chiasm",
-            Option_C: "Optic radiation",
-            Option_D: "Occipital cortex",
-            Correct_Answer: "B",
-            Answer_Explanation: "Pituitary macro-adenomas grow upwards and compress the optic chiasm. The optic chiasm contains decussating nasal fibers from both retinas, which receive visual fields from the temporal side. Compression here results in bitemporal hemianopsia.",
-            Page_Number: 22,
-            Year: 2022,
-            Confidence: "High"
-          },
-          {
-            Question_Number: 8,
-            Question_Text: "During the processing, a low confidence question was detected due to heavy watermark overlap. Identify the drug that inhibits both Cox-1 and Cox-2 irreversibly.",
-            Option_A: "Ibuprofen",
-            Option_B: "Aspirin",
-            Option_C: "Celecoxib",
-            Option_D: "Acetaminophen",
-            Correct_Answer: "B",
-            Answer_Explanation: "Aspirin (acetylsalicylic acid) is unique because it irreversibly inhibits COX-1 and COX-2 by acetylating the active site serine residue, preventing arachidonic acid binding.",
-            Page_Number: 27,
-            Year: 2023,
-            Confidence: "Low"
-          }
-        ];
-
-        for (const q of sampleQuestions) {
-          const questionId = uuidv4();
-          const cleanText = cleanWatermarks(q.Question_Text);
-          const cleanExplanation = cleanWatermarks(q.Answer_Explanation);
-          const classification = classifyQuestion(cleanText);
-          
-          let explanationText = cleanExplanation;
-          let finalSubject = classification.subject;
-          let finalChapter = classification.chapter;
-          let finalTopic = classification.topic;
-          let finalDifficulty = classification.difficulty;
-          let finalClinicalType = classification.clinicalType;
-          let finalQuestionType = q.Image_Present ? "Image Based" : classification.questionType;
-          let finalKeywords = classification.keywords.join(', ');
-          let finalGenerationSource = 'Local Fallback';
-
-          if (geminiApiKey) {
-            try {
-              await sleep(1000); // 1000ms throttle
-              logToExecutionFile('INFO', `Enriching Simulated Question ${q.Question_Number} via Google Gemini API...`, uploadId);
-              const promptText = `
-  You are an expert medical professor preparing candidates for the NEET PG entrance exam.
-  Analyze the following NEET PG multiple-choice question, options, and correct answer:
-  
-  Question: ${cleanText}
-  Option A: ${q.Option_A}
-  Option B: ${q.Option_B}
-  Option C: ${q.Option_C}
-  Option D: ${q.Option_D}
-  Correct Answer Letter: ${q.Correct_Answer}
-  
-  Provide your analysis in JSON format with exactly the following fields:
-  {
-    "explanation": "Detailed explanation explaining why the correct answer is the correct choice among the other options.",
-    "subject": "Standard medical subject (e.g. Anatomy, Physiology, Biochemistry, Pathology, Microbiology, Pharmacology, Forensic Medicine, PSM, ENT, Ophthalmology, Medicine, Surgery, Obstetrics & Gynecology, Pediatrics, Psychiatry, Dermatology, Radiology, Anaesthesia, Orthopaedics)",
-    "chapter": "Specific clinical chapter of the subject",
-    "topic": "Specific medical topic under the chapter",
-    "difficulty": "Easy, Medium, or Hard",
-    "clinicalType": "Clinical Scenario, Conceptual, or Fact Recall",
-    "questionType": "Clinical Scenario, Single Best Answer, Image Based, Assertion Reason, or Fact Recall",
-    "keywords": ["keyword1", "keyword2", "keyword3"]
-  }
-  `;
-              const geminiData = await callGeminiAPI(geminiApiKey, promptText);
-              if (geminiData) {
-                explanationText = geminiData.explanation || explanationText;
-                finalSubject = geminiData.subject || finalSubject;
-                finalChapter = geminiData.chapter || finalChapter;
-                finalTopic = geminiData.topic || finalTopic;
-                finalDifficulty = geminiData.difficulty || finalDifficulty;
-                finalClinicalType = geminiData.clinicalType || finalClinicalType;
-                finalQuestionType = q.Image_Present ? "Image Based" : (geminiData.questionType || finalQuestionType);
-                if (geminiData.keywords && Array.isArray(geminiData.keywords)) {
-                  finalKeywords = geminiData.keywords.join(', ');
-                }
-                finalGenerationSource = 'Gemini AI';
-                logToExecutionFile('INFO', `Successfully enriched Simulated Question ${q.Question_Number} via Google Gemini API!`, uploadId);
-              }
-            } catch (geminiErr) {
-              logToExecutionFile('WARN', `Google Gemini API enrichment failed for Simulated Question ${q.Question_Number}: ${geminiErr.message}. Falling back to local classifier.`, uploadId);
-            }
-          }
-
-          await dbQuery.run(`
-            INSERT INTO QuestionBank (
-              Question_ID, Upload_ID, Question_Number, Question_Text, 
-              Option_A, Option_B, Option_C, Option_D, Correct_Answer, 
-              Answer_Explanation, Subject, Chapter, Topic, Difficulty_Level, 
-              Clinical_or_Conceptual, Question_Type, Image_Present, Embedded_Image, 
-              Image_Description, Previous_Year, Page_Number, Keywords, 
-              Similarity_Group_ID, OCR_Confidence, Generation_Source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            questionId,
-            uploadId,
-            q.Question_Number,
-            cleanText,
-            q.Option_A,
-            q.Option_B,
-            q.Option_C,
-            q.Option_D,
-            q.Correct_Answer,
-            explanationText,
-            finalSubject,
-            finalChapter,
-            finalTopic,
-            finalDifficulty,
-            finalClinicalType,
-            finalQuestionType,
-            q.Image_Present ? 1 : 0,
-            q.Image_Present ? `/uploads/images/${questionId}.jpg` : null,
-            q.Image_Description || null,
-            q.Year,
-            q.Page_Number,
-            finalKeywords,
-            uuidv4().substring(0, 8),
-            q.Confidence,
-            finalGenerationSource
-          ]);
-          
-          if (q.Image_Present) {
-            const imageId = uuidv4();
-            const imagePath = `/uploads/images/${questionId}.jpg`;
-            const physicalPath = path.join(imageDir, `${questionId}.jpg`);
-            const transparentPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-            fs.writeFileSync(physicalPath, Buffer.from(transparentPngBase64, 'base64'));
-            
-            await dbQuery.run(`
-              INSERT INTO Images (
-                Image_ID, Question_ID, Image_Path, Image_Description, Image_Type
-              ) VALUES (?, ?, ?, ?, ?)
-            `, [
-              imageId,
-              questionId,
-              imagePath,
-              q.Image_Description,
-              q.Image_Type
-            ]);
-          }
-          extractedCount++;
-        }
-        logToExecutionFile('WARN', `OCR Confidence was recorded LOW on Page 27 due to overlapping watermark overlay. Repaired text via context analysis.`, uploadId);
+        await dbQuery.run(
+          'UPDATE UploadHistory SET Processing_Status = ?, Questions_Extracted = 0 WHERE Upload_ID = ?',
+          ['FAILED', uploadId]
+        );
+        
+        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+        logToExecutionFile('INFO', `PDF processing ended with no questions extracted. Duration: ${duration}s.`, uploadId);
+        return;
       }
     }
     
