@@ -6,8 +6,8 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 
 const { dbQuery, initDatabase } = require('./config/database');
-const { processPDFPipeline, logToExecutionFile } = require('./services/processingEngine');
-const { generateExcelWorkbook } = require('./services/excelGenerator');
+const { processPDFPipeline, enrichPendingQuestions, logToExecutionFile } = require('./services/processingEngine');
+const { generateExcelWorkbook, generateTrendsExcelWorkbook } = require('./services/excelGenerator');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -175,6 +175,39 @@ app.post('/api/process', async (req, res) => {
 });
 
 /**
+ * 2b. POST /api/enrichPending
+ * Triggers deferred batch enrichment for all pending questions (or a specific upload)
+ */
+app.post('/api/enrichPending', async (req, res) => {
+  try {
+    const { uploadId } = req.body;
+    let geminiApiKey = null;
+    const keyRecord = await dbQuery.get("SELECT Setting_Value FROM SystemSettings WHERE Setting_Key = 'gemini_api_key'");
+    if (keyRecord && keyRecord.Setting_Value) {
+      geminiApiKey = keyRecord.Setting_Value.trim();
+    }
+
+    if (!geminiApiKey) {
+      return res.status(400).json({ error: 'Gemini API Key is missing. Please add it in settings.' });
+    }
+
+    // Trigger async processing pipeline so endpoint returns instantly
+    enrichPendingQuestions(geminiApiKey, uploadId)
+      .catch(err => {
+        logToExecutionFile('ERROR', `Async background enrichment crashed: ${err.message}`, uploadId || 'BATCH');
+      });
+
+    res.status(200).json({
+      success: true,
+      message: 'Batch enrichment started in the background.'
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to trigger batch enrichment.' });
+  }
+});
+
+/**
  * 3. GET /api/processingStatus
  * Monitors ongoing parsing status of active queues
  */
@@ -193,10 +226,15 @@ app.get('/api/processingStatus', async (req, res) => {
  */
 app.get('/api/questions', async (req, res) => {
   try {
-    const { subject, difficulty, year, search, limit = 20, offset = 0 } = req.query;
+    const { subject, difficulty, year, uploadId, search, hasImage, limit = 20, offset = 0 } = req.query;
     
     let query = `SELECT * FROM QuestionBank WHERE 1=1`;
     const params = [];
+    
+    if (uploadId && uploadId !== 'All') {
+      query += ` AND Upload_ID = ?`;
+      params.push(uploadId);
+    }
     
     if (subject && subject !== 'All') {
       query += ` AND Subject = ?`;
@@ -211,6 +249,11 @@ app.get('/api/questions', async (req, res) => {
     if (year && year !== 'All') {
       query += ` AND Previous_Year = ?`;
       params.push(parseInt(year));
+    }
+    
+    if (hasImage && hasImage !== 'All') {
+      query += ` AND Image_Present = ?`;
+      params.push(hasImage === 'true' ? 1 : 0);
     }
     
     if (search) {
@@ -302,16 +345,153 @@ app.get('/api/summary', async (req, res) => {
       ORDER BY Previous_Year DESC
     `);
 
+    const uploads = await dbQuery.all(`
+      SELECT Upload_ID as uploadId, File_Name as fileName 
+      FROM UploadHistory 
+      WHERE Processing_Status = 'COMPLETED'
+      ORDER BY Upload_Date DESC
+    `);
+
     res.status(200).json({
       totalQuestions,
       subjects,
       chapters,
       imageCount,
       confidenceStats,
-      years
+      years,
+      uploads
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to compile statistics summary.' });
+  }
+});
+
+/**
+ * 6b. GET /api/trends/subject-matrix
+ * Returns dynamic YoY subject distribution counts, totals, percentages, and summaries
+ */
+app.get('/api/trends/subject-matrix', async (req, res) => {
+  try {
+    const rawData = await dbQuery.all(`
+      SELECT Previous_Year as year, Subject, COUNT(*) as count
+      FROM QuestionBank
+      WHERE Previous_Year IS NOT NULL AND Subject IS NOT NULL AND Subject != ''
+      GROUP BY Previous_Year, Subject
+      ORDER BY Previous_Year DESC, count DESC
+    `);
+
+    const yearTotalsRaw = await dbQuery.all(`
+      SELECT Previous_Year as year, COUNT(*) as total
+      FROM QuestionBank
+      WHERE Previous_Year IS NOT NULL
+      GROUP BY Previous_Year
+    `);
+    const yearTotals = {};
+    yearTotalsRaw.forEach(row => { yearTotals[row.year] = row.total; });
+
+    const imageTotalsRaw = await dbQuery.all(`
+      SELECT Previous_Year as year, COUNT(*) as imageCount
+      FROM QuestionBank
+      WHERE Previous_Year IS NOT NULL AND (Image_Present = 1 OR Image_Present = 'true')
+      GROUP BY Previous_Year
+    `);
+    const imageTotals = {};
+    imageTotalsRaw.forEach(row => { imageTotals[row.year] = row.imageCount; });
+
+    const clinicalTotalsRaw = await dbQuery.all(`
+      SELECT Previous_Year as year, COUNT(*) as clinicalCount
+      FROM QuestionBank
+      WHERE Previous_Year IS NOT NULL AND Clinical_or_Conceptual = 'Clinical Scenario'
+      GROUP BY Previous_Year
+    `);
+    const clinicalTotals = {};
+    clinicalTotalsRaw.forEach(row => { clinicalTotals[row.year] = row.clinicalCount; });
+
+    const yearsSet = new Set();
+    const subjectsSet = new Set();
+    rawData.forEach(row => {
+      yearsSet.add(row.year);
+      subjectsSet.add(row.Subject);
+    });
+
+    const years = Array.from(yearsSet).sort((a, b) => b - a);
+    const subjects = Array.from(subjectsSet).sort();
+
+    const pivotData = {};
+    years.forEach(yr => {
+      pivotData[yr] = {};
+      subjects.forEach(subj => {
+        pivotData[yr][subj] = { count: 0, percentage: 0 };
+      });
+    });
+
+    rawData.forEach(row => {
+      const yr = row.year;
+      const subj = row.Subject;
+      const cnt = row.count;
+      const total = yearTotals[yr] || 0;
+      const pct = total ? parseFloat(((cnt / total) * 100).toFixed(2)) : 0;
+      if (pivotData[yr] && pivotData[yr][subj]) {
+        pivotData[yr][subj] = { count: cnt, percentage: pct };
+      }
+    });
+
+    const yearStats = {};
+    years.forEach(yr => {
+      const total = yearTotals[yr] || 0;
+      const imgCount = imageTotals[yr] || 0;
+      const imgPct = total ? parseFloat(((imgCount / total) * 100).toFixed(2)) : 0;
+      const clinCount = clinicalTotals[yr] || 0;
+      const clinPct = total ? parseFloat(((clinCount / total) * 100).toFixed(2)) : 0;
+      yearStats[yr] = {
+        total,
+        imageCount: imgCount,
+        imagePercentage: imgPct,
+        clinicalCount: clinCount,
+        clinicalPercentage: clinPct
+      };
+    });
+
+    res.status(200).json({
+      years,
+      subjects,
+      pivotData,
+      yearStats,
+      flatData: rawData.map(r => {
+        const total = yearTotals[r.year] || 0;
+        return {
+          ...r,
+          percentage: total ? parseFloat(((r.count / total) * 100).toFixed(2)) : 0
+        };
+      })
+    });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to compile YoY Trends Subject Matrix: ${error.message}` });
+  }
+});
+
+/**
+ * 6c. GET /api/trends/downloadExcel
+ * Streams YoY subject distribution metrics to browser downloads
+ */
+app.get('/api/trends/downloadExcel', async (req, res) => {
+  try {
+    logToExecutionFile('INFO', `Assembling YoY Subject trends spreadsheet download.`);
+    const workbook = await generateTrendsExcelWorkbook();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=NEET_PG_YoY_Trends_${new Date().toISOString().split('T')[0]}.xlsx`
+    );
+    await workbook.xlsx.write(res);
+    res.end();
+    logToExecutionFile('INFO', `YoY Trends spreadsheet file successfully generated and piped to client.`);
+  } catch (error) {
+    logToExecutionFile('ERROR', `YoY Trends Excel generation failed: ${error.message}`);
+    res.status(500).json({ error: `Trends spreadsheet compilation failed: ${error.message}` });
   }
 });
 

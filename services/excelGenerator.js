@@ -341,6 +341,206 @@ async function generateExcelWorkbook(uploadId = null) {
   return workbook;
 }
 
+/**
+ * YoY Trends Excel Generation Engine [NEW]
+ * Compiles dynamic pivot matrix and flat list sheets for subject concentration analytics.
+ */
+async function generateTrendsExcelWorkbook() {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'NEET PG Processing System';
+  workbook.lastModifiedBy = 'System Worker';
+  workbook.created = new Date();
+  
+  // 1. Fetch data from SQLite database
+  const rawData = await dbQuery.all(`
+    SELECT Previous_Year as year, Subject, COUNT(*) as count
+    FROM QuestionBank
+    WHERE Previous_Year IS NOT NULL AND Subject IS NOT NULL AND Subject != ''
+    GROUP BY Previous_Year, Subject
+    ORDER BY Previous_Year DESC, count DESC
+  `);
+
+  const yearTotalsRaw = await dbQuery.all(`
+    SELECT Previous_Year as year, COUNT(*) as total
+    FROM QuestionBank
+    WHERE Previous_Year IS NOT NULL
+    GROUP BY Previous_Year
+  `);
+  const yearTotals = {};
+  yearTotalsRaw.forEach(row => {
+    yearTotals[row.year] = row.total;
+  });
+
+  const imageTotalsRaw = await dbQuery.all(`
+    SELECT Previous_Year as year, COUNT(*) as imageCount
+    FROM QuestionBank
+    WHERE Previous_Year IS NOT NULL AND (Image_Present = 1 OR Image_Present = 'true')
+    GROUP BY Previous_Year
+  `);
+  const imageTotals = {};
+  imageTotalsRaw.forEach(row => {
+    imageTotals[row.year] = row.imageCount;
+  });
+
+  const clinicalTotalsRaw = await dbQuery.all(`
+    SELECT Previous_Year as year, COUNT(*) as clinicalCount
+    FROM QuestionBank
+    WHERE Previous_Year IS NOT NULL AND Clinical_or_Conceptual = 'Clinical Scenario'
+    GROUP BY Previous_Year
+  `);
+  const clinicalTotals = {};
+  clinicalTotalsRaw.forEach(row => {
+    clinicalTotals[row.year] = row.clinicalCount;
+  });
+
+  // Extract distinct years and subjects
+  const yearsSet = new Set();
+  const subjectsSet = new Set();
+  rawData.forEach(row => {
+    yearsSet.add(row.year);
+    subjectsSet.add(row.Subject);
+  });
+
+  const years = Array.from(yearsSet).sort((a, b) => b - a);
+  const subjects = Array.from(subjectsSet).sort();
+
+  // Color theme definitions
+  const headerFill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF1E1B4B' } // Deep Indigo
+  };
+  const headerFont = {
+    name: 'Segoe UI',
+    color: { argb: 'FFFFFFFF' },
+    size: 11,
+    bold: true
+  };
+  const borderStyle = {
+    top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+  };
+
+  // ==========================================
+  // SHEET 1: YoY Subject Pivot
+  // ==========================================
+  const pSheet = workbook.addWorksheet('YoY Subject Pivot');
+  pSheet.views = [{ showGridLines: true }];
+
+  const pivotColumns = [
+    { header: 'Year', key: 'year', width: 12 }
+  ];
+  subjects.forEach(subj => {
+    pivotColumns.push({ header: subj, key: subj, width: 22 });
+  });
+  pivotColumns.push(
+    { header: 'Total Questions', key: 'total', width: 18 },
+    { header: 'Image Questions (Count / %)', key: 'images', width: 26 },
+    { header: 'Clinical Questions (Count / %)', key: 'clinical', width: 28 }
+  );
+
+  pSheet.columns = pivotColumns;
+
+  // Format header row
+  pSheet.getRow(1).height = 28;
+  pSheet.getRow(1).eachCell(cell => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+  });
+
+  // Populate dynamic matrix row by row
+  years.forEach(yr => {
+    const rowData = { year: yr };
+    const total = yearTotals[yr] || 0;
+
+    // Initialize all dynamic subject counts to zero placeholder
+    subjects.forEach(subj => {
+      rowData[subj] = '0 (0.00%)';
+    });
+
+    // Merge actual counted data
+    rawData.filter(r => r.year === yr).forEach(r => {
+      const pct = total ? ((r.count / total) * 100).toFixed(2) : '0.00';
+      rowData[r.Subject] = `${r.count} (${pct}%)`;
+    });
+
+    rowData.total = total;
+
+    const imgCount = imageTotals[yr] || 0;
+    const imgPct = total ? ((imgCount / total) * 100).toFixed(2) : '0.00';
+    rowData.images = `${imgCount} (${imgPct}%)`;
+
+    const clinCount = clinicalTotals[yr] || 0;
+    const clinPct = total ? ((clinCount / total) * 100).toFixed(2) : '0.00';
+    rowData.clinical = `${clinCount} (${clinPct}%)`;
+
+    pSheet.addRow(rowData);
+  });
+
+  pSheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (rowNum === 1) return;
+    row.height = 24;
+    row.eachCell(cell => {
+      cell.font = { name: 'Segoe UI', size: 10 };
+      cell.border = borderStyle;
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      
+      // Bold critical columns
+      if (cell.column === 1 || cell.column === pSheet.columns.length - 2) {
+        cell.font = { name: 'Segoe UI', size: 10, bold: true };
+      }
+    });
+  });
+
+  // ==========================================
+  // SHEET 2: YoY Flat List
+  // ==========================================
+  const fSheet = workbook.addWorksheet('YoY Flat List');
+  fSheet.views = [{ showGridLines: true }];
+  
+  fSheet.columns = [
+    { header: 'Year', key: 'year', width: 12 },
+    { header: 'Subject', key: 'subject', width: 25 },
+    { header: 'Number of Questions', key: 'count', width: 22 },
+    { header: 'Concentration % in Year', key: 'percentage', width: 25 }
+  ];
+
+  fSheet.getRow(1).height = 26;
+  fSheet.getRow(1).eachCell(cell => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  rawData.forEach(row => {
+    const yr = row.year;
+    const total = yearTotals[yr] || 0;
+    const percentage = total ? parseFloat(((row.count / total) * 100).toFixed(2)) : 0;
+    fSheet.addRow({
+      year: yr,
+      subject: row.Subject,
+      count: row.count,
+      percentage: `${percentage}%`
+    });
+  });
+
+  fSheet.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (rowNum === 1) return;
+    row.height = 20;
+    row.eachCell(cell => {
+      cell.font = { name: 'Segoe UI', size: 10 };
+      cell.border = borderStyle;
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+  });
+
+  return workbook;
+}
+
 module.exports = {
-  generateExcelWorkbook
+  generateExcelWorkbook,
+  generateTrendsExcelWorkbook
 };

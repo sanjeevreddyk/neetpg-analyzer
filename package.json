@@ -5,7 +5,26 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "inspect-db": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\query_db.js",
+    "inspect-2024": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\inspect_2024_questions.js",
+    "inspect-2024-pdf": "node inspect_2024.js",
+    "check-pages": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\check_pages.js",
+    "scan-pdfs": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\scan_pdfs.js",
+    "inspect-format": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\inspect_format.js",
+    "inspect-bold": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\inspect_format_bold.js",
+    "find-bold": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\find_bold_distribution.js",
+    "test-write": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\test_write.js",
+    "unlock-db": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\unlock_db.js",
+    "list-processes": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\list_processes.js",
+    "kill-all-node": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\kill_all_node.js",
+    "kill-onedrive": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\kill_onedrive.js",
+    "delete-journal": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\delete_journal.js",
+    "kill-word": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\kill_word.js",
+    "copy-db": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\copy_db.js",
+    "register-2025": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\register_2025.js",
+    "inspect-images": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\inspect_images.js",
+    "simulate-format3": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\simulate_format3_parse.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

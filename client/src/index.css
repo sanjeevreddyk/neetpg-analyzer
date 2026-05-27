@@ -694,6 +694,8 @@ select.form-control option {
   border-radius: 12px;
   box-shadow: 0 10px 50px rgba(0, 0, 0, 0.8), 0 0 30px rgba(139, 92, 246, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #ffffff;
+  padding: 16px;
 }
 
 .zoom-close {
@@ -748,4 +750,21 @@ select.form-control option {
 @keyframes zoomScaleUp {
   from { transform: scale(0.92); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* Modal Nav Button Premium Styles */
+.modal-nav-btn {
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+}
+
+.modal-nav-btn:hover:not(:disabled) {
+  background: var(--accent-cyan) !important;
+  color: #000000 !important;
+  border-color: var(--accent-cyan) !important;
+  box-shadow: 0 0 20px var(--accent-cyan);
+  transform: scale(1.08);
+}
+
+.modal-nav-btn:active:not(:disabled) {
+  transform: scale(0.96);
 }

@@ -26,11 +26,18 @@ function App() {
   const [subjectFilter, setSubjectFilter] = useState('All');
   const [difficultyFilter, setDifficultyFilter] = useState('All');
   const [yearFilter, setYearFilter] = useState('All');
+  const [uploadFilter, setUploadFilter] = useState('All');
+  const [imageFilter, setImageFilter] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [layoutMode, setLayoutMode] = useState('grid'); // 'grid' (original cards) or 'table' (compact list)
   const [zoomedImage, setZoomedImage] = useState(null);
+  
+  // Trend YoY Matrix Analytics States
+  const [trendsMatrix, setTrendsMatrix] = useState(null);
+  const [trendsLoading, setTrendsLoading] = useState(false);
+  const [trendsViewMode, setTrendsViewMode] = useState('matrix'); // 'matrix' or 'flat'
   
   // Settings Configuration States
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -59,10 +66,17 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Fetch trends when analytics tab becomes active
+  useEffect(() => {
+    if (activeTab === 'analytics') {
+      fetchTrendsMatrix();
+    }
+  }, [activeTab]);
+
   // Re-fetch questions when filters change
   useEffect(() => {
     fetchQuestions();
-  }, [subjectFilter, difficultyFilter, yearFilter, searchTerm, page, itemsPerPage]);
+  }, [subjectFilter, difficultyFilter, yearFilter, uploadFilter, imageFilter, searchTerm, page, itemsPerPage]);
 
   // Scroll logs console to bottom
   useEffect(() => {
@@ -95,6 +109,8 @@ function App() {
       if (subjectFilter !== 'All') url += `&subject=${encodeURIComponent(subjectFilter)}`;
       if (difficultyFilter !== 'All') url += `&difficulty=${encodeURIComponent(difficultyFilter)}`;
       if (yearFilter !== 'All') url += `&year=${encodeURIComponent(yearFilter)}`;
+      if (uploadFilter !== 'All') url += `&uploadId=${encodeURIComponent(uploadFilter)}`;
+      if (imageFilter !== 'All') url += `&hasImage=${encodeURIComponent(imageFilter === 'Yes' ? 'true' : 'false')}`;
       if (searchTerm) url += `&search=${encodeURIComponent(searchTerm)}`;
       
       const response = await fetch(url);
@@ -117,6 +133,21 @@ function App() {
       }
     } catch (err) {
       console.error('Failed to load summary stats:', err);
+    }
+  };
+
+  const fetchTrendsMatrix = async () => {
+    setTrendsLoading(true);
+    try {
+      const response = await fetch('/api/trends/subject-matrix');
+      if (response.ok) {
+        const data = await response.json();
+        setTrendsMatrix(data);
+      }
+    } catch (err) {
+      console.error('Failed to load trends subject matrix:', err);
+    } finally {
+      setTrendsLoading(false);
     }
   };
 
@@ -281,6 +312,25 @@ function App() {
   };
 
 
+  const triggerBatchEnrichment = async () => {
+    try {
+      const resp = await fetch('/api/enrichPending', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        alert(err.error || 'Failed to trigger batch enrichment.');
+        return;
+      }
+      alert('Batch enrichment started! Check the server logs, and refresh this page in a few minutes to see updated explanations.');
+    } catch (err) {
+      console.error('Trigger request crashed:', err);
+      alert('Could not connect to backend server.');
+    }
+  };
+
   const triggerExcelDownload = (uploadId = '') => {
     let url = '/api/downloadExcel';
     if (uploadId) url += `?uploadId=${uploadId}`;
@@ -298,6 +348,37 @@ function App() {
       console.error('Failed to load question details:', err);
     }
   };
+
+  const navigateQuestion = (direction) => {
+    if (!selectedQuestion) return;
+    const currentIdx = questions.findIndex(q => q.Question_ID === selectedQuestion.Question_ID);
+    if (currentIdx === -1) return;
+    
+    if (direction === 'prev' && currentIdx > 0) {
+      viewQuestionDetails(questions[currentIdx - 1].Question_ID);
+    } else if (direction === 'next' && currentIdx < questions.length - 1) {
+      viewQuestionDetails(questions[currentIdx + 1].Question_ID);
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!selectedQuestion) return;
+      
+      if (e.key === 'Escape') {
+        setSelectedQuestion(null);
+      } else if (e.key === 'ArrowLeft') {
+        navigateQuestion('prev');
+      } else if (e.key === 'ArrowRight') {
+        navigateQuestion('next');
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedQuestion, questions]);
 
   const handleOpenSettings = async () => {
     setKeyLoadError('');
@@ -644,12 +725,33 @@ function App() {
 
             <select 
               className="form-control"
+              value={imageFilter}
+              onChange={(e) => { setImageFilter(e.target.value); setPage(1); }}
+            >
+              <option value="All">All Images</option>
+              <option value="Yes">With Images</option>
+              <option value="No">Without Images</option>
+            </select>
+
+            <select 
+              className="form-control"
               value={yearFilter}
               onChange={(e) => { setYearFilter(e.target.value); setPage(1); }}
             >
               <option value="All">All Years</option>
               {stats.years && stats.years.map(y => (
                 <option key={y.year} value={y.year}>{y.year} ({y.count})</option>
+              ))}
+            </select>
+
+            <select 
+              className="form-control"
+              value={uploadFilter}
+              onChange={(e) => { setUploadFilter(e.target.value); setPage(1); }}
+            >
+              <option value="All">All Uploaded Files</option>
+              {stats.uploads && stats.uploads.map(u => (
+                <option key={u.uploadId} value={u.uploadId}>{u.fileName}</option>
               ))}
             </select>
 
@@ -671,6 +773,14 @@ function App() {
               disabled={questions.length === 0}
             >
               📥 Download Excel
+            </button>
+
+            <button 
+              className="btn btn-primary"
+              style={{ display: 'flex', justifyContent: 'center', background: 'linear-gradient(135deg, #a855f7 0%, #d946ef 100%)', border: 'none' }}
+              onClick={() => triggerBatchEnrichment()}
+            >
+              ✨ Enrich Pending
             </button>
           </div>
 
@@ -792,86 +902,254 @@ function App() {
 
       {/* 3. TRENDS & ANALYTICS */}
       {activeTab === 'analytics' && (
-        <div className="dashboard-grid">
-          {/* Subject Frequency Panel */}
-          <div className="panel-card">
-            <h3 className="panel-title" style={{ marginBottom: '1.5rem' }}><span>📊</span> Subject Frequency Distribution</h3>
-            {stats.totalQuestions === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '5rem' }}>
-                No database metrics loaded. Ingest papers to visualize trends.
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+          
+          {/* YoY Trends Section */}
+          <div className="panel-card" style={{ width: '100%', padding: '1.75rem', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '1.25rem' }}>
+              <div>
+                <h3 className="panel-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span>📈</span> Year-over-Year (YoY) Subject Analytics Matrix
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                  Analyze how many questions from each subject appeared in specific years and examine subject concentration heatmaps.
+                </p>
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                {stats.subjects && stats.subjects.map(s => {
-                  const percentage = stats.totalQuestions ? ((s.count / stats.totalQuestions) * 100).toFixed(1) : 0;
-                  return (
-                    <div key={s.Subject}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
-                        <span style={{ fontWeight: 600 }}>{s.Subject}</span>
-                        <span style={{ color: 'var(--text-secondary)' }}>{s.count} Qs ({percentage}%)</span>
-                      </div>
-                      <div style={{ background: 'rgba(255,255,255,0.03)', height: '10px', borderRadius: '99px', overflow: 'hidden' }}>
-                        <div style={{ background: 'linear-gradient(90deg, var(--accent-violet), var(--accent-cyan))', height: '100%', width: `${percentage}%` }}></div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                {/* View Switcher Toggle */}
+                <div style={{ display: 'flex', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '2px' }}>
+                  <button 
+                    className={`btn ${trendsViewMode === 'matrix' ? 'btn-primary' : ''}`}
+                    style={{ padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: 'none', borderRadius: '6px', background: trendsViewMode === 'matrix' ? '' : 'transparent' }}
+                    onClick={() => setTrendsViewMode('matrix')}
+                  >
+                    📊 Matrix Grid
+                  </button>
+                  <button 
+                    className={`btn ${trendsViewMode === 'flat' ? 'btn-primary' : ''}`}
+                    style={{ padding: '0.35rem 0.85rem', fontSize: '0.8rem', border: 'none', borderRadius: '6px', background: trendsViewMode === 'flat' ? '' : 'transparent' }}
+                    onClick={() => setTrendsViewMode('flat')}
+                  >
+                    📋 Flat List
+                  </button>
+                </div>
+                {/* Export Button */}
+                <button 
+                  className="btn btn-primary"
+                  style={{
+                    padding: '0.45rem 1rem',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    background: 'linear-gradient(135deg, var(--accent-violet), #4f46e5)',
+                    boxShadow: '0 4px 15px rgba(139, 92, 246, 0.3)'
+                  }}
+                  onClick={() => window.open('/api/trends/downloadExcel', '_blank')}
+                  disabled={!trendsMatrix || !trendsMatrix.years || trendsMatrix.years.length === 0}
+                >
+                  📥 Export Trends to Excel
+                </button>
               </div>
-            )}
-          </div>
-
-          {/* Chapter Density & 2026 Predictions */}
-          <div className="panel-card">
-            <h3 className="panel-title" style={{ marginBottom: '1.5rem' }}><span>🔮</span> NEET PG 2026 Prediction Model</h3>
-            <div style={{ background: 'rgba(139, 92, 246, 0.05)', border: '1px solid rgba(139, 92, 246, 0.2)', padding: '1.25rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
-              <h4 style={{ fontFamily: 'var(--font-display)', color: 'var(--accent-violet)', marginBottom: '0.5rem' }}>
-                High-Yield Probability Matrix
-              </h4>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Based on historical trend algorithms, repeated clinical indicators, and curriculum weight ratios, our engine predicts high probability trends for NEET PG 2026.
-              </p>
             </div>
 
-            {stats.totalQuestions === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem' }}>
-                Database metrics are currently empty.
+            {trendsLoading ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '5rem' }}>
+                <span className="pulse-glow" style={{ display: 'inline-block', fontSize: '1.25rem', color: 'var(--accent-violet)', animation: 'pulseGlow 1.5s infinite' }}>
+                  ⚡ Loading YoY subject trends database records...
+                </span>
+              </div>
+            ) : !trendsMatrix || !trendsMatrix.years || trendsMatrix.years.length === 0 ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '5rem' }}>
+                No Year-over-Year trends data loaded. Ingest papers with dynamic years to visualize.
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', borderBottom: '1px solid var(--border-glass)' }}>
-                  <div>
-                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>Cardiology: Acute Coronary Syndrome</span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Focus on ECG mappings & coronary occlusion indicators</span>
+              <div>
+                {trendsViewMode === 'matrix' ? (
+                  /* Pivot Matrix Grid View with horizontal scrolling and sticky Year column */
+                  <div style={{ overflowX: 'auto', borderRadius: '12px', border: '1px solid var(--border-glass)', background: 'rgba(15, 23, 42, 0.2)' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr style={{ background: 'rgba(30, 27, 75, 0.65)', borderBottom: '2px solid var(--border-glass)' }}>
+                          <th style={{ padding: '0.85rem 1.25rem', fontWeight: 700, position: 'sticky', left: 0, background: 'rgba(30, 27, 75, 0.95)', zIndex: 10, textAlign: 'left', borderRight: '1px solid var(--border-glass)' }}>
+                            Year
+                          </th>
+                          {trendsMatrix.subjects.map(subj => (
+                            <th key={subj} style={{ padding: '0.85rem 1rem', fontWeight: 600, minWidth: '130px', whiteSpace: 'nowrap', borderRight: '1px solid var(--border-glass)' }}>
+                              {subj}
+                            </th>
+                          ))}
+                          <th style={{ padding: '0.85rem 1.25rem', fontWeight: 700, background: 'rgba(30, 27, 75, 0.85)', minWidth: '120px', borderRight: '1px solid var(--border-glass)' }}>
+                            Total Qs
+                          </th>
+                          <th style={{ padding: '0.85rem 1.25rem', fontWeight: 700, background: 'rgba(30, 27, 75, 0.85)', minWidth: '160px', borderRight: '1px solid var(--border-glass)' }}>
+                            Image Qs (%)
+                          </th>
+                          <th style={{ padding: '0.85rem 1.25rem', fontWeight: 700, background: 'rgba(30, 27, 75, 0.85)', minWidth: '160px' }}>
+                            Clinical Scenario Qs (%)
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trendsMatrix.years.map(yr => {
+                          const stats = trendsMatrix.yearStats[yr] || { total: 0, imageCount: 0, imagePercentage: 0, clinicalCount: 0, clinicalPercentage: 0 };
+                          return (
+                            <tr key={yr} style={{ borderBottom: '1px solid var(--border-glass)', transition: 'background 0.2s' }}>
+                              <td style={{ padding: '0.85rem 1.25rem', fontWeight: 700, position: 'sticky', left: 0, background: '#111024', zIndex: 10, textAlign: 'left', borderRight: '1px solid var(--border-glass)' }}>
+                                {yr}
+                              </td>
+                              {trendsMatrix.subjects.map(subj => {
+                                const cell = trendsMatrix.pivotData[yr][subj];
+                                const count = cell ? cell.count : 0;
+                                const pct = cell ? cell.percentage : 0;
+                                
+                                // Heatmap opacity styling
+                                const alpha = count > 0 ? Math.min(0.28, pct / 25) : 0;
+                                const bgStyle = count > 0 ? { background: `rgba(139, 92, 246, ${alpha})` } : {};
+                                
+                                return (
+                                  <td key={subj} style={{ padding: '0.85rem 1rem', borderRight: '1px solid var(--border-glass)', ...bgStyle }}>
+                                    {count > 0 ? (
+                                      <div>
+                                        <span style={{ fontWeight: 600, display: 'block', fontSize: '0.9rem' }}>{count}</span>
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{pct.toFixed(1)}%</span>
+                                      </div>
+                                    ) : (
+                                      <span style={{ color: 'rgba(255,255,255,0.1)' }}>-</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                              <td style={{ padding: '0.85rem 1.25rem', fontWeight: 700, borderRight: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.01)', fontSize: '0.95rem' }}>
+                                {stats.total}
+                              </td>
+                              <td style={{ padding: '0.85rem 1.25rem', borderRight: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.01)' }}>
+                                <span style={{ fontWeight: 600, display: 'block' }}>{stats.imageCount}</span>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{stats.imagePercentage.toFixed(1)}%</span>
+                              </td>
+                              <td style={{ padding: '0.85rem 1.25rem', background: 'rgba(255,255,255,0.01)' }}>
+                                <span style={{ fontWeight: 600, display: 'block' }}>{stats.clinicalCount}</span>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{stats.clinicalPercentage.toFixed(1)}%</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                  <span className="status-badge completed" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-emerald)' }}>94% Yield</span>
-                </div>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', borderBottom: '1px solid var(--border-glass)' }}>
-                  <div>
-                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>Endocrine Pathology: Thyroid Swellings</span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Focus on histological features (Hurthle cells, follicles)</span>
+                ) : (
+                  /* Dynamic flat view table */
+                  <div style={{ overflowX: 'auto', borderRadius: '12px', border: '1px solid var(--border-glass)' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr style={{ background: 'rgba(30, 27, 75, 0.65)', borderBottom: '2px solid var(--border-glass)' }}>
+                          <th style={{ padding: '0.75rem 1.25rem', fontWeight: 600 }}>Year</th>
+                          <th style={{ padding: '0.75rem 1.25rem', fontWeight: 600 }}>Subject</th>
+                          <th style={{ padding: '0.75rem 1.25rem', fontWeight: 600, textAlign: 'center' }}>Number of Questions</th>
+                          <th style={{ padding: '0.75rem 1.25rem', fontWeight: 600, textAlign: 'center' }}>Concentration % in Year</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trendsMatrix.flatData.map((row, idx) => (
+                          <tr key={idx} style={{ borderBottom: '1px solid var(--border-glass)' }} className="table-row-hover">
+                            <td style={{ padding: '0.75rem 1.25rem', fontWeight: 600 }}>{row.year}</td>
+                            <td style={{ padding: '0.75rem 1.25rem' }}>{row.Subject}</td>
+                            <td style={{ padding: '0.75rem 1.25rem', textAlign: 'center', fontWeight: 600 }}>{row.count}</td>
+                            <td style={{ padding: '0.75rem 1.25rem', textAlign: 'center', color: 'var(--accent-cyan)', fontWeight: 600 }}>
+                              {row.percentage.toFixed(1)}%
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                  <span className="status-badge completed" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-emerald)' }}>88% Yield</span>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', borderBottom: '1px solid var(--border-glass)' }}>
-                  <div>
-                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>Neonatology: Infant Distress</span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Focus on radiograph (RDS ground-glass granules)</span>
-                  </div>
-                  <span className="status-badge pending" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning-amber)' }}>76% Yield</span>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem' }}>
-                  <div>
-                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>NSAIDs: Cox Enzymes Inhibition</span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Irreversible binding properties of Aspirin</span>
-                  </div>
-                  <span className="status-badge pending" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning-amber)' }}>69% Yield</span>
-                </div>
+                )}
               </div>
             )}
           </div>
+
+          <div className="dashboard-grid" style={{ width: '100%' }}>
+            {/* Subject Frequency Panel */}
+            <div className="panel-card">
+              <h3 className="panel-title" style={{ marginBottom: '1.5rem' }}><span>📊</span> Subject Frequency Distribution</h3>
+              {stats.totalQuestions === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '5rem' }}>
+                  No database metrics loaded. Ingest papers to visualize trends.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  {stats.subjects && stats.subjects.map(s => {
+                    const percentage = stats.totalQuestions ? ((s.count / stats.totalQuestions) * 100).toFixed(1) : 0;
+                    return (
+                      <div key={s.Subject}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+                          <span style={{ fontWeight: 600 }}>{s.Subject}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{s.count} Qs ({percentage}%)</span>
+                        </div>
+                        <div style={{ background: 'rgba(255,255,255,0.03)', height: '10px', borderRadius: '99px', overflow: 'hidden' }}>
+                          <div style={{ background: 'linear-gradient(90deg, var(--accent-violet), var(--accent-cyan))', height: '100%', width: `${percentage}%` }}></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Chapter Density & 2026 Predictions */}
+            <div className="panel-card">
+              <h3 className="panel-title" style={{ marginBottom: '1.5rem' }}><span>🔮</span> NEET PG 2026 Prediction Model</h3>
+              <div style={{ background: 'rgba(139, 92, 246, 0.05)', border: '1px solid rgba(139, 92, 246, 0.2)', padding: '1.25rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
+                <h4 style={{ fontFamily: 'var(--font-display)', color: 'var(--accent-violet)', marginBottom: '0.5rem' }}>
+                  High-Yield Probability Matrix
+                </h4>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  Based on historical trend algorithms, repeated clinical indicators, and curriculum weight ratios, our engine predicts high probability trends for NEET PG 2026.
+                </p>
+              </div>
+
+              {stats.totalQuestions === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem' }}>
+                  Database metrics are currently empty.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', borderBottom: '1px solid var(--border-glass)' }}>
+                    <div>
+                      <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>Cardiology: Acute Coronary Syndrome</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Focus on ECG mappings & coronary occlusion indicators</span>
+                    </div>
+                    <span className="status-badge completed" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-emerald)' }}>94% Yield</span>
+                  </div>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', borderBottom: '1px solid var(--border-glass)' }}>
+                    <div>
+                      <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>Endocrine Pathology: Thyroid Swellings</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Focus on histological features (Hurthle cells, follicles)</span>
+                    </div>
+                    <span className="status-badge completed" style={{ background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success-emerald)' }}>88% Yield</span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', borderBottom: '1px solid var(--border-glass)' }}>
+                    <div>
+                      <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>Neonatology: Infant Distress</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Focus on radiograph (RDS ground-glass granules)</span>
+                    </div>
+                    <span className="status-badge pending" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning-amber)' }}>76% Yield</span>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem' }}>
+                    <div>
+                      <span style={{ display: 'block', fontWeight: 600, fontSize: '0.9rem' }}>NSAIDs: Cox Enzymes Inhibition</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Irreversible binding properties of Aspirin</span>
+                    </div>
+                    <span className="status-badge pending" style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning-amber)' }}>69% Yield</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -912,135 +1190,201 @@ function App() {
       )}
 
       {/* Detail Overlay Modal */}
-      {selectedQuestion && (
-        <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setSelectedQuestion(null)}>×</button>
-            
-            <div className="modal-body">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}>
-                  Question Detail #{selectedQuestion.Question_Number}
-                </h3>
-                <span className={`badge conf-${selectedQuestion.OCR_Confidence}`} style={{ padding: '0.35rem 0.75rem', borderRadius: '8px' }}>
-                  OCR Confidence: {selectedQuestion.OCR_Confidence}
-                </span>
-              </div>
-
-              <div style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '1.25rem' }}>
-                <p style={{ fontWeight: 500, fontSize: '1.05rem', lineHeight: '1.5' }}>
-                  {selectedQuestion.Question_Text}
-                </p>
-              </div>
-
-              {/* Show actual extracted diagram if present */}
-              {(selectedQuestion.Image_Present === 1 || selectedQuestion.Image_Present === true) && (
-                <div className="image-display-container" style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '0.75rem',
-                  background: 'rgba(255, 255, 255, 0.01)',
+      {selectedQuestion && (() => {
+        const currentIdx = questions.findIndex(q => q.Question_ID === selectedQuestion.Question_ID);
+        const isFirstQuestion = currentIdx === 0;
+        const isLastQuestion = currentIdx === questions.length - 1;
+        return (
+          <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', width: '95%', maxWidth: '1000px', justifyContent: 'center' }}>
+              
+              {/* Floating Prev Button */}
+              <button 
+                className="modal-nav-btn" 
+                onClick={(e) => { e.stopPropagation(); navigateQuestion('prev'); }}
+                disabled={isFirstQuestion}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.75)',
                   border: '1px solid var(--border-glass)',
-                  borderRadius: '12px',
-                  padding: '1.25rem',
-                  margin: '1rem 0'
-                }}>
-                  <div 
-                    style={{ position: 'relative', cursor: 'zoom-in', width: '100%', display: 'flex', justifyContent: 'center' }}
-                    onClick={() => setZoomedImage(selectedQuestion.Embedded_Image)}
-                    title="Click to Zoom Diagram"
-                  >
-                    <img 
-                      src={selectedQuestion.Embedded_Image} 
-                      alt={selectedQuestion.Image_Description || "Extracted Medical Diagram"} 
-                      style={{
-                        maxWidth: '100%',
-                        maxHeight: '380px',
-                        borderRadius: '8px',
-                        boxShadow: '0 4px 25px rgba(0, 0, 0, 0.5), 0 0 20px rgba(139, 92, 246, 0.2)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        objectFit: 'contain'
-                      }}
-                      onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.src = "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%230f172a%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 font-size=%2240%22>🖼️</text></svg>";
-                      }}
-                    />
-                    <div className="zoom-badge-overlay">
-                      🔍 Click to Zoom
-                    </div>
+                  color: 'var(--text-primary)',
+                  width: '52px',
+                  height: '52px',
+                  borderRadius: '99px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: isFirstQuestion ? 'not-allowed' : 'pointer',
+                  opacity: isFirstQuestion ? 0.3 : 1,
+                  fontSize: '1.5rem',
+                  transition: 'all 0.2s ease',
+                  zIndex: 1010,
+                  flexShrink: 0
+                }}
+                title="Previous Question (Left Arrow)"
+              >
+                ←
+              </button>
+
+              <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                <button className="modal-close" onClick={() => setSelectedQuestion(null)}>×</button>
+                
+                <div className="modal-body">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--text-primary)' }}>
+                      Question Detail #{selectedQuestion.Question_Number}
+                    </h3>
+                    <span className={`badge conf-${selectedQuestion.OCR_Confidence}`} style={{ padding: '0.35rem 0.75rem', borderRadius: '8px' }}>
+                      OCR Confidence: {selectedQuestion.OCR_Confidence}
+                    </span>
                   </div>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                    Caption: {selectedQuestion.Image_Description || "Visual diagram extracted from PDF page"}
-                  </span>
-                </div>
-              )}
 
-              {/* Display Multiple Choice Options in Grid */}
-              <div className="options-list">
-                <div className={`option-item ${selectedQuestion.Correct_Answer === 'A' ? 'correct' : ''}`}>
-                  <span className="option-letter">A</span>
-                  <span>{selectedQuestion.Option_A}</span>
-                </div>
-                <div className={`option-item ${selectedQuestion.Correct_Answer === 'B' ? 'correct' : ''}`}>
-                  <span className="option-letter">B</span>
-                  <span>{selectedQuestion.Option_B}</span>
-                </div>
-                <div className={`option-item ${selectedQuestion.Correct_Answer === 'C' ? 'correct' : ''}`}>
-                  <span className="option-letter">C</span>
-                  <span>{selectedQuestion.Option_C}</span>
-                </div>
-                <div className={`option-item ${selectedQuestion.Correct_Answer === 'D' ? 'correct' : ''}`}>
-                  <span className="option-letter">D</span>
-                  <span>{selectedQuestion.Option_D}</span>
+                  <div style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', borderRadius: '12px', padding: '1.25rem' }}>
+                    <p style={{ fontWeight: 500, fontSize: '1.05rem', lineHeight: '1.5' }}>
+                      {selectedQuestion.Question_Text}
+                    </p>
+                  </div>
+
+                  {/* Show actual extracted diagram if present */}
+                  {(selectedQuestion.Image_Present === 1 || selectedQuestion.Image_Present === true) && (
+                    <div className="image-display-container" style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.75rem',
+                      background: 'rgba(255, 255, 255, 0.01)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: '12px',
+                      padding: '1.25rem',
+                      margin: '1rem 0'
+                    }}>
+                      <div 
+                        style={{ position: 'relative', cursor: 'zoom-in', width: '100%', display: 'flex', justifyContent: 'center' }}
+                        onClick={() => setZoomedImage(selectedQuestion.Embedded_Image)}
+                        title="Click to Zoom Diagram"
+                      >
+                        <img 
+                          src={selectedQuestion.Embedded_Image} 
+                          alt={selectedQuestion.Image_Description || "Extracted Medical Diagram"} 
+                          style={{
+                            maxWidth: '100%',
+                            maxHeight: '380px',
+                            borderRadius: '8px',
+                            boxShadow: '0 4px 25px rgba(0, 0, 0, 0.5), 0 0 20px rgba(139, 92, 246, 0.2)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            objectFit: 'contain',
+                            background: '#ffffff',
+                            padding: '12px'
+                          }}
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%230f172a%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 font-size=%2240%22>🖼️</text></svg>";
+                          }}
+                        />
+                        <div className="zoom-badge-overlay">
+                          🔍 Click to Zoom
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                        Caption: {selectedQuestion.Image_Description || "Visual diagram extracted from PDF page"}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Display Multiple Choice Options in Grid */}
+                  <div className="options-list">
+                    <div className={`option-item ${selectedQuestion.Correct_Answer === 'A' ? 'correct' : ''}`}>
+                      <span className="option-letter">A</span>
+                      <span>{selectedQuestion.Option_A}</span>
+                    </div>
+                    <div className={`option-item ${selectedQuestion.Correct_Answer === 'B' ? 'correct' : ''}`}>
+                      <span className="option-letter">B</span>
+                      <span>{selectedQuestion.Option_B}</span>
+                    </div>
+                    <div className={`option-item ${selectedQuestion.Correct_Answer === 'C' ? 'correct' : ''}`}>
+                      <span className="option-letter">C</span>
+                      <span>{selectedQuestion.Option_C}</span>
+                    </div>
+                    {selectedQuestion.Option_D && selectedQuestion.Option_D.trim() !== '' && (
+                      <div className={`option-item ${selectedQuestion.Correct_Answer === 'D' ? 'correct' : ''}`}>
+                        <span className="option-letter">D</span>
+                        <span>{selectedQuestion.Option_D}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Display Clinical Explanation */}
+                  {selectedQuestion.Answer_Explanation && (
+                    <div className="explanation-box" style={
+                      selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
+                        ? { background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px', padding: '1rem' }
+                        : {}
+                    }>
+                      <h4 style={{ fontFamily: 'var(--font-display)', color: 'var(--accent-violet)', marginBottom: '0.5rem', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
+                          ? <span>⏳ AI Explanation Pending</span>
+                          : <span>Clinical Rationale &amp; Answer Explanation</span>
+                        }
+                      </h4>
+                      <p style={{ fontSize: '0.85rem', color: selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]') ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-secondary)', lineHeight: '1.6' }}>
+                        {selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
+                          ? selectedQuestion.Answer_Explanation.replace('[AI Explanation Pending] ', '')
+                          : selectedQuestion.Answer_Explanation
+                        }
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Metadata Badges Footer */}
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
+                    <span className="badge subject">Subject: {selectedQuestion.Subject}</span>
+                    <span className="badge subject" style={{ background: 'rgba(6, 182, 212, 0.15)', color: '#22d3ee' }}>
+                      Chapter: {selectedQuestion.Chapter}
+                    </span>
+                    <span className="badge difficulty">Difficulty: {selectedQuestion.Difficulty_Level}</span>
+                    <span className="badge difficulty" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+                      Domain: {selectedQuestion.Clinical_or_Conceptual}
+                    </span>
+                    <span className="badge" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)' }}>
+                      Year: {selectedQuestion.Previous_Year}
+                    </span>
+                    <span className="badge" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)' }}>
+                      Page: {selectedQuestion.Page_Number}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Display Clinical Explanation */}
-              {selectedQuestion.Answer_Explanation && (
-                <div className="explanation-box" style={
-                  selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
-                    ? { background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px', padding: '1rem' }
-                    : {}
-                }>
-                  <h4 style={{ fontFamily: 'var(--font-display)', color: 'var(--accent-violet)', marginBottom: '0.5rem', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
-                      ? <span>⏳ AI Explanation Pending</span>
-                      : <span>Clinical Rationale &amp; Answer Explanation</span>
-                    }
-                  </h4>
-                  <p style={{ fontSize: '0.85rem', color: selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]') ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-secondary)', lineHeight: '1.6' }}>
-                    {selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
-                      ? selectedQuestion.Answer_Explanation.replace('[AI Explanation Pending] ', '')
-                      : selectedQuestion.Answer_Explanation
-                    }
-                  </p>
-                </div>
-              )}
+              {/* Floating Next Button */}
+              <button 
+                className="modal-nav-btn" 
+                onClick={(e) => { e.stopPropagation(); navigateQuestion('next'); }}
+                disabled={isLastQuestion}
+                style={{
+                  background: 'rgba(15, 23, 42, 0.75)',
+                  border: '1px solid var(--border-glass)',
+                  color: 'var(--text-primary)',
+                  width: '52px',
+                  height: '52px',
+                  borderRadius: '99px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: isLastQuestion ? 'not-allowed' : 'pointer',
+                  opacity: isLastQuestion ? 0.3 : 1,
+                  fontSize: '1.5rem',
+                  transition: 'all 0.2s ease',
+                  zIndex: 1010,
+                  flexShrink: 0
+                }}
+                title="Next Question (Right Arrow)"
+              >
+                →
+              </button>
 
-
-              {/* Metadata Badges Footer */}
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>
-                <span className="badge subject">Subject: {selectedQuestion.Subject}</span>
-                <span className="badge subject" style={{ background: 'rgba(6, 182, 212, 0.15)', color: '#22d3ee' }}>
-                  Chapter: {selectedQuestion.Chapter}
-                </span>
-                <span className="badge difficulty">Difficulty: {selectedQuestion.Difficulty_Level}</span>
-                <span className="badge difficulty" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
-                  Domain: {selectedQuestion.Clinical_or_Conceptual}
-                </span>
-                <span className="badge" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)' }}>
-                  Year: {selectedQuestion.Previous_Year}
-                </span>
-                <span className="badge" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)' }}>
-                  Page: {selectedQuestion.Page_Number}
-                </span>
-              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Zoomed Image Overlay Modal */}
       {zoomedImage && (
