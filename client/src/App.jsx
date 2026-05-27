@@ -8,6 +8,7 @@ function App() {
   const [questions, setQuestions] = useState([]);
   const [totalQuestions, setTotalQuestions] = useState(0);
   const [selectedQuestion, setSelectedQuestion] = useState(null);
+  const [modalQuestionsList, setModalQuestionsList] = useState([]);
   const [stats, setStats] = useState({
     totalQuestions: 0,
     subjects: [],
@@ -66,6 +67,32 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // Handle SPA Hash Routing
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash === '#/dashboard') {
+        setActiveTab('dashboard');
+      } else if (hash === '#/question-bank') {
+        setActiveTab('questions');
+      } else if (hash === '#/trends') {
+        setActiveTab('analytics');
+      } else if (hash === '#/console') {
+        setActiveTab('settings');
+      } else {
+        // Fallback or default
+        window.location.hash = '#/dashboard';
+        setActiveTab('dashboard');
+      }
+    };
+
+    // Run once on mount
+    handleHashChange();
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   // Fetch trends when analytics tab becomes active
   useEffect(() => {
     if (activeTab === 'analytics') {
@@ -73,10 +100,12 @@ function App() {
     }
   }, [activeTab]);
 
-  // Re-fetch questions when filters change
+  // Re-fetch questions when filters or active tab changes (Auto-Refresh)
   useEffect(() => {
-    fetchQuestions();
-  }, [subjectFilter, difficultyFilter, yearFilter, uploadFilter, imageFilter, searchTerm, page, itemsPerPage]);
+    if (activeTab === 'questions') {
+      fetchQuestions();
+    }
+  }, [activeTab, subjectFilter, difficultyFilter, yearFilter, uploadFilter, imageFilter, searchTerm, page, itemsPerPage]);
 
   // Scroll logs console to bottom
   useEffect(() => {
@@ -337,12 +366,44 @@ function App() {
     window.location.href = url;
   };
 
-  const viewQuestionDetails = async (questionId) => {
+  const renderOptionText = (optText) => {
+    if (optText && optText.startsWith('/uploads/')) {
+      return (
+        <img 
+          src={optText} 
+          alt="Option graphic" 
+          style={{ 
+            maxHeight: '120px', 
+            backgroundColor: '#ffffff', 
+            padding: '6px', 
+            borderRadius: '6px',
+            display: 'block',
+            marginTop: '6px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            objectFit: 'contain',
+            cursor: 'zoom-in'
+          }} 
+          onClick={(e) => {
+            e.stopPropagation();
+            setZoomedImage(optText);
+          }}
+          title="Click to Zoom Option Graphic"
+        />
+      );
+    }
+    return <span>{optText}</span>;
+  };
+
+  const viewQuestionDetails = async (questionId, keepList = false) => {
     try {
       const response = await fetch(`/api/question/${questionId}`);
       if (response.ok) {
         const data = await response.json();
         setSelectedQuestion(data);
+        if (!keepList) {
+          setModalQuestionsList(questions);
+        }
       }
     } catch (err) {
       console.error('Failed to load question details:', err);
@@ -350,14 +411,33 @@ function App() {
   };
 
   const navigateQuestion = (direction) => {
-    if (!selectedQuestion) return;
-    const currentIdx = questions.findIndex(q => q.Question_ID === selectedQuestion.Question_ID);
+    if (!selectedQuestion || modalQuestionsList.length === 0) return;
+    const currentIdx = modalQuestionsList.findIndex(q => q.Question_ID === selectedQuestion.Question_ID);
     if (currentIdx === -1) return;
     
     if (direction === 'prev' && currentIdx > 0) {
-      viewQuestionDetails(questions[currentIdx - 1].Question_ID);
-    } else if (direction === 'next' && currentIdx < questions.length - 1) {
-      viewQuestionDetails(questions[currentIdx + 1].Question_ID);
+      viewQuestionDetails(modalQuestionsList[currentIdx - 1].Question_ID, true);
+    } else if (direction === 'next' && currentIdx < modalQuestionsList.length - 1) {
+      viewQuestionDetails(modalQuestionsList[currentIdx + 1].Question_ID, true);
+    }
+  };
+
+  const drilldownFromTrends = async (subject, year) => {
+    try {
+      const url = `/api/questions?subject=${encodeURIComponent(subject)}&year=${encodeURIComponent(year)}&limit=1000`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.questions && data.questions.length > 0) {
+          setModalQuestionsList(data.questions);
+          viewQuestionDetails(data.questions[0].Question_ID, true);
+        } else {
+          alert('No questions found for this subject and year.');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load drilldown questions:', err);
+      alert('Error fetching drilldown data.');
     }
   };
 
@@ -378,7 +458,7 @@ function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedQuestion, questions]);
+  }, [selectedQuestion, modalQuestionsList]);
 
   const handleOpenSettings = async () => {
     setKeyLoadError('');
@@ -472,25 +552,25 @@ function App() {
         <nav className="nav-tabs">
           <button 
             className={`nav-tab ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setActiveTab('dashboard')}
+            onClick={() => window.location.hash = '#/dashboard'}
           >
             Dashboard
           </button>
           <button 
             className={`nav-tab ${activeTab === 'questions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('questions')}
+            onClick={() => window.location.hash = '#/question-bank'}
           >
             Question Bank
           </button>
           <button 
             className={`nav-tab ${activeTab === 'analytics' ? 'active' : ''}`}
-            onClick={() => setActiveTab('analytics')}
+            onClick={() => window.location.hash = '#/trends'}
           >
             Trend Hub
           </button>
           <button 
             className={`nav-tab ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
+            onClick={() => window.location.hash = '#/console'}
           >
             System Console
           </button>
@@ -1011,8 +1091,25 @@ function App() {
                                   <td key={subj} style={{ padding: '0.85rem 1rem', borderRight: '1px solid var(--border-glass)', ...bgStyle }}>
                                     {count > 0 ? (
                                       <div>
-                                        <span style={{ fontWeight: 600, display: 'block', fontSize: '0.9rem' }}>{count}</span>
-                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{pct.toFixed(1)}%</span>
+                                        <button 
+                                          onClick={() => drilldownFromTrends(subj, yr)}
+                                          className="trend-drilldown-link"
+                                          style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            color: 'var(--accent-cyan)',
+                                            textDecoration: 'underline',
+                                            fontWeight: 700,
+                                            cursor: 'pointer',
+                                            fontSize: '1.05rem',
+                                            padding: 0,
+                                            display: 'inline-block'
+                                          }}
+                                          title={`Click to view ${count} ${subj} questions from ${yr}`}
+                                        >
+                                          {count}
+                                        </button>
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'block' }}>{pct.toFixed(1)}%</span>
                                       </div>
                                     ) : (
                                       <span style={{ color: 'rgba(255,255,255,0.1)' }}>-</span>
@@ -1191,9 +1288,9 @@ function App() {
 
       {/* Detail Overlay Modal */}
       {selectedQuestion && (() => {
-        const currentIdx = questions.findIndex(q => q.Question_ID === selectedQuestion.Question_ID);
+        const currentIdx = modalQuestionsList.findIndex(q => q.Question_ID === selectedQuestion.Question_ID);
         const isFirstQuestion = currentIdx === 0;
-        const isLastQuestion = currentIdx === questions.length - 1;
+        const isLastQuestion = currentIdx === modalQuestionsList.length - 1;
         return (
           <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', width: '95%', maxWidth: '1000px', justifyContent: 'center' }}>
@@ -1294,20 +1391,20 @@ function App() {
                   <div className="options-list">
                     <div className={`option-item ${selectedQuestion.Correct_Answer === 'A' ? 'correct' : ''}`}>
                       <span className="option-letter">A</span>
-                      <span>{selectedQuestion.Option_A}</span>
+                      {renderOptionText(selectedQuestion.Option_A)}
                     </div>
                     <div className={`option-item ${selectedQuestion.Correct_Answer === 'B' ? 'correct' : ''}`}>
                       <span className="option-letter">B</span>
-                      <span>{selectedQuestion.Option_B}</span>
+                      {renderOptionText(selectedQuestion.Option_B)}
                     </div>
                     <div className={`option-item ${selectedQuestion.Correct_Answer === 'C' ? 'correct' : ''}`}>
                       <span className="option-letter">C</span>
-                      <span>{selectedQuestion.Option_C}</span>
+                      {renderOptionText(selectedQuestion.Option_C)}
                     </div>
                     {selectedQuestion.Option_D && selectedQuestion.Option_D.trim() !== '' && (
                       <div className={`option-item ${selectedQuestion.Correct_Answer === 'D' ? 'correct' : ''}`}>
                         <span className="option-letter">D</span>
-                        <span>{selectedQuestion.Option_D}</span>
+                        {renderOptionText(selectedQuestion.Option_D)}
                       </div>
                     )}
                   </div>

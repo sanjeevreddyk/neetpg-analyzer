@@ -516,6 +516,23 @@ function saveDiagramToDisk(questionId, imageData) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Save option visual graphics to disk and return paths
+// ─────────────────────────────────────────────────────────────────────────────
+function saveOptionImageToDisk(questionId, optionLetter, imageData) {
+  const physicalPath = path.join(imageDir, `${questionId}_opt${optionLetter}.png`);
+  fs.writeFileSync(physicalPath, imageData);
+  return `/uploads/images/${questionId}_opt${optionLetter}.png`;
+}
+
+function hasNoTextOptions(q) {
+  const cleanA = (q.optA || '').replace(/‹\/?B›/g, '').trim();
+  const cleanB = (q.optB || '').replace(/‹\/?B›/g, '').trim();
+  const cleanC = (q.optC || '').replace(/‹\/?B›/g, '').trim();
+  return cleanA === '' && cleanB === '' && cleanC === '';
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Insert one question + optional image record into the database
 // ─────────────────────────────────────────────────────────────────────────────
 async function insertQuestion(uploadId, params) {
@@ -635,6 +652,57 @@ function flatDiagramsFrom(pageDiagramsMap) {
 
 // Shared: score-based diagram assignment (Pass 1) + proximity fallback (Pass 2) + DB insert
 async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagramsMap, uploadId, extractedYear, totalPagesCount) {
+  // Pre-pass: Handle questions with NO TEXT OPTIONS
+  // Extract and assign option images before standard diagram matching
+  for (const q of parsedQuestions) {
+    const isNoText = hasNoTextOptions(q);
+    if (isNoText) {
+      q.preGenId = uuidv4();
+      
+      const pageDiags = flatDiagrams.filter(d => d.page === q.startPage && !d.assigned);
+      logToExecutionFile('INFO', `Pre-pass: Q${q.qNum} has no text options. Found ${pageDiags.length} unassigned diagrams on page ${q.startPage}`, uploadId);
+      
+      const hasOptD = q.hasOptD !== undefined ? q.hasOptD : (q.optD && q.optD.trim() !== '');
+      const numOptionsNeeded = hasOptD ? 4 : 3;
+      
+      if (pageDiags.length >= numOptionsNeeded) {
+        let optionStartIdx = 0;
+        if (pageDiags.length > numOptionsNeeded) {
+          // The first one is the question stem diagram
+          const qStemDiag = pageDiags[0];
+          qStemDiag.assigned = true;
+          q.assignedDiagram = qStemDiag;
+          optionStartIdx = 1;
+          logToExecutionFile('INFO', `Pre-pass: Assigned diagram 0 on page ${q.startPage} as question stem image for Q${q.qNum}`, uploadId);
+        }
+        
+        // Assign the next diagrams as options A, B, C, and optionally D
+        const diagA = pageDiags[optionStartIdx];
+        const diagB = pageDiags[optionStartIdx + 1];
+        const diagC = pageDiags[optionStartIdx + 2];
+        const diagD = numOptionsNeeded === 4 ? pageDiags[optionStartIdx + 3] : null;
+        
+        q.optA = saveOptionImageToDisk(q.preGenId, 'A', diagA.data);
+        q.optB = saveOptionImageToDisk(q.preGenId, 'B', diagB.data);
+        q.optC = saveOptionImageToDisk(q.preGenId, 'C', diagC.data);
+        if (diagD) {
+          q.optD = saveOptionImageToDisk(q.preGenId, 'D', diagD.data);
+        } else {
+          q.optD = '';
+        }
+        
+        diagA.assigned = true;
+        diagB.assigned = true;
+        diagC.assigned = true;
+        if (diagD) diagD.assigned = true;
+        
+        logToExecutionFile('INFO', `Pre-pass: Assigned option images for Q${q.qNum}: A=${q.optA}, B=${q.optB}, C=${q.optC}, D=${q.optD}`, uploadId);
+      } else {
+        logToExecutionFile('WARN', `Pre-pass: Q${q.qNum} has no text options but page ${q.startPage} has only ${pageDiags.length} diagrams (needed ${numOptionsNeeded})`, uploadId);
+      }
+    }
+  }
+
   // Compute image affinity score for each question
   parsedQuestions.forEach(q => {
     q.affinityScore = computeImageAffinityScore(q.cleanText);
@@ -643,7 +711,9 @@ async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagra
   // Pass 1: Global maximum matching based on affinity score and same-page priority
   const possiblePairs = [];
   flatDiagrams.forEach(diag => {
+    if (diag.assigned) return;
     parsedQuestions.forEach(q => {
+      if (q.assignedDiagram) return;
       const isPageMatch = q.startPage >= diag.page - 1 && q.startPage <= diag.page + 1;
       if (isPageMatch) {
         const pageDiff = Math.abs(q.startPage - diag.page);
@@ -691,7 +761,7 @@ async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagra
 
   // Insert all questions into DB
   for (const q of parsedQuestions) {
-    const questionId = uuidv4();
+    const questionId = q.preGenId || uuidv4();
     const classification = classifyQuestion(q.cleanText);
     if (q.pdfSubject) classification.subject = q.pdfSubject;
     if (q.pdfTopic) {
@@ -1375,7 +1445,8 @@ async function processPDFPipeline(uploadId, filePath, fileName) {
           pdfTopic: '',
           pdfSubTopic: '',
           assignedDiagram: null,
-          affinityScore: 0
+          affinityScore: 0,
+          hasOptD: cleanOpt4Idx !== -1
         });
       }
 
