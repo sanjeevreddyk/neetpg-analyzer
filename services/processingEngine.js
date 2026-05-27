@@ -396,8 +396,8 @@ function buildPageDiagramsMap(imageResult, totalPagesCount, uploadId) {
       const dimKey = `${img.width}_${img.height}`;
       // Skip if repeated watermark or known banner
       if (watermarkDims.has(dimKey) || knownWatermarks.has(dimKey)) return false;
-      // Skip very small images (icons, bullets, tiny decorations < 80x80)
-      if (img.width < 80 || img.height < 80) return false;
+      // Skip very small images (icons, bullets, tiny decorations < 40x40)
+      if (img.width < 40 || img.height < 40) return false;
       return true;
     });
 
@@ -525,10 +525,15 @@ function saveOptionImageToDisk(questionId, optionLetter, imageData) {
 }
 
 function hasNoTextOptions(q) {
-  const cleanA = (q.optA || '').replace(/‹\/?B›/g, '').trim();
-  const cleanB = (q.optB || '').replace(/‹\/?B›/g, '').trim();
-  const cleanC = (q.optC || '').replace(/‹\/?B›/g, '').trim();
-  return cleanA === '' && cleanB === '' && cleanC === '';
+  const cleanA = (q.optA || '').replace(/‹\/?B›/g, '').trim().toLowerCase();
+  const cleanB = (q.optB || '').replace(/‹\/?B›/g, '').trim().toLowerCase();
+  const cleanC = (q.optC || '').replace(/‹\/?B›/g, '').trim().toLowerCase();
+  
+  const isEmptyA = cleanA === '' || cleanA === 'refer to image';
+  const isEmptyB = cleanB === '' || cleanB === 'refer to image';
+  const isEmptyC = cleanC === '' || cleanC === 'refer to image';
+  
+  return isEmptyA && isEmptyB && isEmptyC;
 }
 
 
