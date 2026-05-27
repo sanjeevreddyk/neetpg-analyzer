@@ -151,6 +151,23 @@ async function initDatabase() {
       // Ignore error if column already exists
     }
 
+    // One-time subject normalization migration for historic data
+    try {
+      await dbQuery.run(`
+        UPDATE QuestionBank 
+        SET Subject = 'Anaesthesia' 
+        WHERE Subject = 'Anesthesia' OR Subject = 'anesthesia'
+      `);
+      await dbQuery.run(`
+        UPDATE QuestionBank 
+        SET Subject = 'Medicine' 
+        WHERE Subject = 'General Medicine' OR Subject = 'general medicine'
+      `);
+      console.log('Database migration: Normalized subject names (Anesthesia -> Anaesthesia, General Medicine -> Medicine).');
+    } catch (e) {
+      console.error('Failed to run subject normalization migration:', e);
+    }
+
     console.log('Database tables and indexes verified successfully.');
   } catch (err) {
     console.error('Failed to initialize database tables:', err);

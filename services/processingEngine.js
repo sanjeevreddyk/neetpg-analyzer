@@ -670,9 +670,16 @@ async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagra
       const hasOptD = q.hasOptD !== undefined ? q.hasOptD : (q.optD && q.optD.trim() !== '');
       const numOptionsNeeded = hasOptD ? 4 : 3;
       
-      if (pageDiags.length >= numOptionsNeeded) {
+      if (pageDiags.length > 0) {
+        // Heuristic: Does the first diagram belong to the question stem?
+        const textIndicatesImage = /\b(image|figure|photograph|picture|diagram|graph|chart|shown|marked|mark|arrow|arrows|identify|visual|radiograph|x-ray|scan|mri|ct|ultrasound|histopathology|biopsy|investigation|provided|sarcomere)\b/i.test(q.cleanText);
+        const firstIsLarge = pageDiags[0] && (pageDiags[0].width > 300 || pageDiags[0].height > 250);
+        const hasExtraDiagram = pageDiags.length > numOptionsNeeded;
+        
+        const isFirstStemDiag = hasExtraDiagram || textIndicatesImage || firstIsLarge;
+        
         let optionStartIdx = 0;
-        if (pageDiags.length > numOptionsNeeded) {
+        if (isFirstStemDiag) {
           // The first one is the question stem diagram
           const qStemDiag = pageDiags[0];
           qStemDiag.assigned = true;
@@ -681,29 +688,37 @@ async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagra
           logToExecutionFile('INFO', `Pre-pass: Assigned diagram 0 on page ${q.startPage} as question stem image for Q${q.qNum}`, uploadId);
         }
         
-        // Assign the next diagrams as options A, B, C, and optionally D
-        const diagA = pageDiags[optionStartIdx];
-        const diagB = pageDiags[optionStartIdx + 1];
-        const diagC = pageDiags[optionStartIdx + 2];
-        const diagD = numOptionsNeeded === 4 ? pageDiags[optionStartIdx + 3] : null;
-        
-        q.optA = saveOptionImageToDisk(q.preGenId, 'A', diagA.data);
-        q.optB = saveOptionImageToDisk(q.preGenId, 'B', diagB.data);
-        q.optC = saveOptionImageToDisk(q.preGenId, 'C', diagC.data);
-        if (diagD) {
-          q.optD = saveOptionImageToDisk(q.preGenId, 'D', diagD.data);
-        } else {
-          q.optD = '';
+        // Assign the remaining diagrams as options A, B, C, D
+        const diagsLeft = pageDiags.slice(optionStartIdx);
+        if (diagsLeft.length > 0) {
+          const diagA = diagsLeft[0];
+          const diagB = diagsLeft.length > 1 ? diagsLeft[1] : null;
+          const diagC = diagsLeft.length > 2 ? diagsLeft[2] : null;
+          const diagD = diagsLeft.length > 3 ? diagsLeft[3] : null;
+          
+          if (diagA) {
+            q.optA = saveOptionImageToDisk(q.preGenId, 'A', diagA.data);
+            diagA.assigned = true;
+          }
+          if (diagB) {
+            q.optB = saveOptionImageToDisk(q.preGenId, 'B', diagB.data);
+            diagB.assigned = true;
+          }
+          if (diagC) {
+            q.optC = saveOptionImageToDisk(q.preGenId, 'C', diagC.data);
+            diagC.assigned = true;
+          }
+          if (diagD && hasOptD) {
+            q.optD = saveOptionImageToDisk(q.preGenId, 'D', diagD.data);
+            diagD.assigned = true;
+          } else {
+            q.optD = '';
+          }
+          
+          logToExecutionFile('INFO', `Pre-pass: Assigned option images for Q${q.qNum}: A=${q.optA}, B=${q.optB}, C=${q.optC}, D=${q.optD}`, uploadId);
         }
-        
-        diagA.assigned = true;
-        diagB.assigned = true;
-        diagC.assigned = true;
-        if (diagD) diagD.assigned = true;
-        
-        logToExecutionFile('INFO', `Pre-pass: Assigned option images for Q${q.qNum}: A=${q.optA}, B=${q.optB}, C=${q.optC}, D=${q.optD}`, uploadId);
       } else {
-        logToExecutionFile('WARN', `Pre-pass: Q${q.qNum} has no text options but page ${q.startPage} has only ${pageDiags.length} diagrams (needed ${numOptionsNeeded})`, uploadId);
+        logToExecutionFile('WARN', `Pre-pass: Q${q.qNum} has no text options but page ${q.startPage} has no unassigned diagrams`, uploadId);
       }
     }
   }
@@ -769,6 +784,13 @@ async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagra
     const questionId = q.preGenId || uuidv4();
     const classification = classifyQuestion(q.cleanText);
     if (q.pdfSubject) classification.subject = q.pdfSubject;
+    
+    // Normalize Subject Names
+    if (classification.subject.toLowerCase() === 'anesthesia') {
+      classification.subject = 'Anaesthesia';
+    } else if (classification.subject.toLowerCase() === 'general medicine') {
+      classification.subject = 'Medicine';
+    }
     if (q.pdfTopic) {
       classification.chapter = q.pdfTopic;
       classification.topic = q.pdfSubTopic || q.pdfTopic;
@@ -1517,6 +1539,14 @@ async function processPDFPipeline(uploadId, filePath, fileName) {
         // Local classification using extracted text
         const classification = classifyQuestion(cleanText);
         if (q.subject) classification.subject = q.subject;
+        
+        // Normalize Subject Names
+        if (classification.subject.toLowerCase() === 'anesthesia') {
+          classification.subject = 'Anaesthesia';
+        } else if (classification.subject.toLowerCase() === 'general medicine') {
+          classification.subject = 'Medicine';
+        }
+        
         if (q.chapter) classification.chapter = q.chapter;
         if (q.topic) classification.topic = q.topic;
 

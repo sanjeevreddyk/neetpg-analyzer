@@ -55,8 +55,8 @@ const MEDICAL_SUBJECTS = {
 function classifyQuestion(text) {
   const lowercaseText = text.toLowerCase();
   
-  let classifiedSubject = "General Medicine";
-  let classifiedChapter = "General Medicine Principles";
+  let classifiedSubject = "Medicine";
+  let classifiedChapter = "Medicine Principles";
   let classifiedTopic = "General Medical Review";
   let matchedKeywords = [];
   
