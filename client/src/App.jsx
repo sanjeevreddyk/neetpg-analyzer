@@ -262,15 +262,24 @@ function App() {
 
   const triggerFileProcessing = async (uploadId) => {
     try {
-      await fetch('/api/process', {
+      const resp = await fetch('/api/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uploadId })
       });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        alert(err.error || 'Failed to trigger processing.');
+        return;
+      }
+      // Immediately refresh the history so PROCESSING status shows
+      fetchHistory();
     } catch (err) {
       console.error('Trigger request crashed:', err);
+      alert('Could not connect to backend server.');
     }
   };
+
 
   const triggerExcelDownload = (uploadId = '') => {
     let url = '/api/downloadExcel';
@@ -534,8 +543,19 @@ function App() {
                       )}
                       <span className={`status-badge ${up.Processing_Status.toLowerCase()}`}>
                         {up.Processing_Status === 'PROCESSING' && '⏳ '}
+                        {up.Processing_Status === 'FAILED' && '❌ '}
                         {up.Processing_Status}
                       </span>
+                      {up.Processing_Status === 'FAILED' && (
+                        <button
+                          className="btn-secondary"
+                          style={{ border: 'none', background: 'rgba(245,158,11,0.1)', borderRadius: '6px', padding: '0.35rem 0.6rem', cursor: 'pointer', color: 'var(--warning-amber)', fontSize: '0.75rem', fontWeight: 600 }}
+                          onClick={() => triggerFileProcessing(up.Upload_ID)}
+                          title="Retry processing this PDF"
+                        >
+                          🔄 Retry
+                        </button>
+                      )}
                       {up.Processing_Status === 'COMPLETED' && (
                         <button 
                           className="btn-secondary" 
@@ -556,6 +576,7 @@ function App() {
                       </button>
                     </div>
                   </div>
+
                 ))
               )}
             </div>
@@ -978,15 +999,26 @@ function App() {
 
               {/* Display Clinical Explanation */}
               {selectedQuestion.Answer_Explanation && (
-                <div className="explanation-box">
-                  <h4 style={{ fontFamily: 'var(--font-display)', color: 'var(--accent-violet)', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
-                    Clinical Rationale & Answer Explanation
+                <div className="explanation-box" style={
+                  selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
+                    ? { background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px', padding: '1rem' }
+                    : {}
+                }>
+                  <h4 style={{ fontFamily: 'var(--font-display)', color: 'var(--accent-violet)', marginBottom: '0.5rem', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
+                      ? <span>⏳ AI Explanation Pending</span>
+                      : <span>Clinical Rationale &amp; Answer Explanation</span>
+                    }
                   </h4>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-                    {selectedQuestion.Answer_Explanation}
+                  <p style={{ fontSize: '0.85rem', color: selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]') ? 'rgba(245, 158, 11, 0.9)' : 'var(--text-secondary)', lineHeight: '1.6' }}>
+                    {selectedQuestion.Answer_Explanation.startsWith('[AI Explanation Pending]')
+                      ? selectedQuestion.Answer_Explanation.replace('[AI Explanation Pending] ', '')
+                      : selectedQuestion.Answer_Explanation
+                    }
                   </p>
                 </div>
               )}
+
 
               {/* Metadata Badges Footer */}
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', paddingTop: '1rem', borderTop: '1px solid var(--border-glass)' }}>

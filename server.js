@@ -141,6 +141,15 @@ app.post('/api/process', async (req, res) => {
       return res.status(400).json({ error: 'This file is already being processed.' });
     }
 
+    // If retrying a FAILED upload, clean up any partial data from the previous attempt
+    if (record.Processing_Status === 'FAILED') {
+      logToExecutionFile('INFO', `Retrying FAILED upload — clearing previous partial data.`, uploadId);
+      // Clean up any questions that were partially inserted in the failed run
+      await dbQuery.run('DELETE FROM Images WHERE Question_ID IN (SELECT Question_ID FROM QuestionBank WHERE Upload_ID = ?)', [uploadId]);
+      await dbQuery.run('DELETE FROM QuestionBank WHERE Upload_ID = ?', [uploadId]);
+      await dbQuery.run('UPDATE UploadHistory SET Questions_Extracted = 0, Processing_Status = ? WHERE Upload_ID = ?', ['PENDING', uploadId]);
+    }
+
     // Locate the uploaded physical file using the unique path recorded in the ledger
     const filePath = record.File_Path && fs.existsSync(record.File_Path) 
       ? record.File_Path 
