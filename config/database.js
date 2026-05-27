@@ -156,12 +156,12 @@ async function initDatabase() {
       await dbQuery.run(`
         UPDATE QuestionBank 
         SET Subject = 'Anaesthesia' 
-        WHERE Subject = 'Anesthesia' OR Subject = 'anesthesia'
+        WHERE LOWER(TRIM(Subject)) = 'anesthesia'
       `);
       await dbQuery.run(`
         UPDATE QuestionBank 
         SET Subject = 'Medicine' 
-        WHERE Subject = 'General Medicine' OR Subject = 'general medicine'
+        WHERE LOWER(TRIM(Subject)) = 'general medicine'
       `);
       console.log('Database migration: Normalized subject names (Anesthesia -> Anaesthesia, General Medicine -> Medicine).');
     } catch (e) {

@@ -604,9 +604,18 @@ async function enrichWithGemini(apiKey, qNum, cleanText, optA, optB, optC, optD,
 
   if (geminiData && geminiData.explanation) {
     logToExecutionFile('INFO', `Q${qNum} explanation enriched via Gemini.`, uploadId);
+    let finalSubject = geminiData.subject || classification.subject;
+    if (finalSubject) {
+      const fsLower = finalSubject.toLowerCase().trim();
+      if (fsLower === 'anesthesia') {
+        finalSubject = 'Anaesthesia';
+      } else if (fsLower === 'general medicine') {
+        finalSubject = 'Medicine';
+      }
+    }
     return {
       explanation: geminiData.explanation,
-      subject: geminiData.subject || classification.subject,
+      subject: finalSubject,
       chapter: geminiData.chapter || classification.chapter,
       topic: geminiData.topic || classification.topic,
       difficulty: geminiData.difficulty || classification.difficulty,
@@ -1678,7 +1687,16 @@ async function enrichPendingQuestions(apiKey, uploadId = null) {
         if (qIndex >= 0 && qIndex < batch.length) {
           const q = batch[qIndex];
           const explanationText = expl.explanation || 'Explanation generated but empty.';
-          
+          let finalSubject = expl.subject || q.Subject;
+          if (finalSubject) {
+            const fsLower = finalSubject.toLowerCase().trim();
+            if (fsLower === 'anesthesia') {
+              finalSubject = 'Anaesthesia';
+            } else if (fsLower === 'general medicine') {
+              finalSubject = 'Medicine';
+            }
+          }
+
           await dbQuery.run(`
             UPDATE QuestionBank 
             SET Answer_Explanation = ?, Subject = ?, Chapter = ?, Topic = ?, Difficulty_Level = ?, 
@@ -1686,7 +1704,7 @@ async function enrichPendingQuestions(apiKey, uploadId = null) {
             WHERE Question_ID = ?
           `, [
             explanationText,
-            expl.subject || q.Subject,
+            finalSubject,
             expl.chapter || q.Chapter,
             expl.topic || q.Topic,
             expl.difficulty || q.Difficulty_Level,
