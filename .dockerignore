@@ -1,11 +1,3 @@
 node_modules/
 client/node_modules/
-client/dist/
 logs/
-*.db-journal
-*.db-wal
-*.db-shm
-.git/
-.env
-Dockerfile
-fly.toml

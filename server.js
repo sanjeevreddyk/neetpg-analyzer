@@ -808,9 +808,9 @@ if (process.env.NODE_ENV === 'production') {
 
 // Initialize database schema first, then activate express listener
 initDatabase().then(() => {
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`==================================================`);
-    console.log(`NEET PG Processing Engine active on http://localhost:${PORT}`);
+    console.log(`NEET PG Processing Engine active on http://0.0.0.0:${PORT}`);
     console.log(`Press Ctrl+C to terminate execution.`);
     console.log(`==================================================`);
   });

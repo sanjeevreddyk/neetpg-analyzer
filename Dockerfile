@@ -29,11 +29,11 @@ COPY --from=client-builder /app/client/dist ./client/dist
 
 # Expose backend port and set production environment configuration
 ENV NODE_ENV=production
-ENV PORT=5000
+ENV PORT=8080
 ENV DATABASE_PATH=/data/neet_pg_bank_v2.db
 ENV UPLOAD_DIR=/data/uploads
 
-EXPOSE 5000
+EXPOSE 8080
 
 # Ensure persistent mount directory exists locally inside the container
 RUN mkdir -p /data
