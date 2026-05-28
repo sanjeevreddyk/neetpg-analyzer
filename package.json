@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "start-all": "node start-dev.js",
     "inspect-db": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\query_db.js",
     "inspect-2024": "node C:\\Users\\himab\\.gemini\\antigravity\\brain\\a8a7b825-c187-4afb-96c1-4a3461434fad\\scratch\\inspect_2024_questions.js",
     "inspect-2024-pdf": "node inspect_2024.js",
