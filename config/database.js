@@ -163,7 +163,12 @@ async function initDatabase() {
         SET Subject = 'Medicine' 
         WHERE LOWER(TRIM(Subject)) = 'general medicine'
       `);
-      console.log('Database migration: Normalized subject names (Anesthesia -> Anaesthesia, General Medicine -> Medicine).');
+      await dbQuery.run(`
+        UPDATE QuestionBank 
+        SET Subject = 'Anatomy' 
+        WHERE LOWER(TRIM(Subject)) = 'embryology' OR LOWER(TRIM(Subject)) = 'histology'
+      `);
+      console.log('Database migration: Normalized subject names (Anesthesia -> Anaesthesia, General Medicine -> Medicine, Embryology/Histology -> Anatomy).');
     } catch (e) {
       console.error('Failed to run subject normalization migration:', e);
     }

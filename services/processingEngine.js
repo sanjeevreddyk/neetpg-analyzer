@@ -28,7 +28,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 // Gemini API — used ONLY to generate question explanations
 // Returns result object or null if it fails (caller uses placeholder)
 // ─────────────────────────────────────────────────────────────────────────────
-async function callGeminiForExplanation(apiKey, cleanText, optA, optB, optC, optD, correctAns) {
+async function callGeminiForExplanation(apiKey, cleanText, optA, optB, optC, optD, correctAns, isRetry = false) {
   const promptText = `You are an expert medical professor preparing candidates for the NEET PG entrance exam.
 Analyze the following NEET PG multiple-choice question.
 
@@ -72,11 +72,15 @@ Output ONLY a valid JSON object.`;
   const response = await httpsPost(options, payload);
 
   if (response.statusCode === 429) {
+    if (isRetry) {
+      logToExecutionFile('ERROR', `Gemini 429 quota limit reached on retry attempt. Aborting single enrichment.`, 'SINGLE');
+      return null;
+    }
     const retryDelayMs = parseRetryDelay(response.body);
     if (retryDelayMs > 0 && retryDelayMs <= 90000) {
       logToExecutionFile('WARN', `Gemini 429 quota in single enrich — waiting ${retryDelayMs / 1000}s...`, 'SINGLE');
       await sleep(retryDelayMs + 2000);
-      return callGeminiForExplanation(apiKey, cleanText, optA, optB, optC, optD, correctAns); // Retry once
+      return callGeminiForExplanation(apiKey, cleanText, optA, optB, optC, optD, correctAns, true); // Retry once
     } else {
       logToExecutionFile('ERROR', `Gemini daily quota exhausted during single enrichment.`, 'SINGLE');
       return null;
@@ -100,7 +104,7 @@ Output ONLY a valid JSON object.`;
   }
 }
 
-async function callGeminiForExplanationBatch(apiKey, questionsArray, uploadId = 'BATCH') {
+async function callGeminiForExplanationBatch(apiKey, questionsArray, uploadId = 'BATCH', isRetry = false) {
   if (!questionsArray || questionsArray.length === 0) return [];
 
   const questionsFormatted = questionsArray.map((q, idx) => `
@@ -152,11 +156,15 @@ Output ONLY a valid JSON array of these objects.`;
   const response = await httpsPost(options, payload);
 
   if (response.statusCode === 429) {
+    if (isRetry) {
+      logToExecutionFile('ERROR', `Gemini 429 quota limit reached on retry attempt in batch. Aborting batch enrichment.`, uploadId);
+      return null;
+    }
     const retryDelayMs = parseRetryDelay(response.body);
     if (retryDelayMs > 0 && retryDelayMs <= 90000) {
       logToExecutionFile('WARN', `Gemini 429 quota in batch enrich — waiting ${retryDelayMs / 1000}s...`, uploadId);
       await sleep(retryDelayMs + 2000);
-      return callGeminiForExplanationBatch(apiKey, questionsArray, uploadId); // Retry once
+      return callGeminiForExplanationBatch(apiKey, questionsArray, uploadId, true); // Retry once
     } else {
       logToExecutionFile('ERROR', `Gemini daily quota exhausted during batch enrichment.`, uploadId);
       return null;
@@ -575,6 +583,68 @@ async function insertQuestion(uploadId, params) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper to normalize and validate Gemini-returned check constraint fields
+// ─────────────────────────────────────────────────────────────────────────────
+function normalizeConstraintFields(difficulty, clinicalType, questionType, defaultDiff = 'Medium', defaultClin = 'Conceptual', defaultQT = 'Single Best Answer') {
+  // 1. Difficulty Level ('Easy', 'Medium', 'Hard')
+  let finalDifficulty = difficulty || defaultDiff || 'Medium';
+  if (finalDifficulty) {
+    const diffLower = String(finalDifficulty).toLowerCase();
+    if (diffLower.includes('easy')) {
+      finalDifficulty = 'Easy';
+    } else if (diffLower.includes('hard')) {
+      finalDifficulty = 'Hard';
+    } else {
+      finalDifficulty = 'Medium';
+    }
+  } else {
+    finalDifficulty = 'Medium';
+  }
+
+  // 2. Clinical or Conceptual ('Clinical Scenario', 'Conceptual', 'Fact Recall')
+  let finalClinicalType = clinicalType || defaultClin || 'Conceptual';
+  if (finalClinicalType) {
+    const clinLower = String(finalClinicalType).toLowerCase();
+    if (clinLower.includes('clinical')) {
+      finalClinicalType = 'Clinical Scenario';
+    } else if (clinLower.includes('conceptual')) {
+      finalClinicalType = 'Conceptual';
+    } else if (clinLower.includes('fact') || clinLower.includes('recall')) {
+      finalClinicalType = 'Fact Recall';
+    } else {
+      finalClinicalType = 'Conceptual';
+    }
+  } else {
+    finalClinicalType = 'Conceptual';
+  }
+
+  // 3. Question Type ('Clinical Scenario', 'Single Best Answer', 'Image Based', 'Assertion Reason', 'Fact Recall')
+  let finalQuestionType = questionType || defaultQT || 'Single Best Answer';
+  if (finalQuestionType) {
+    const qtLower = String(finalQuestionType).toLowerCase();
+    if (qtLower.includes('assertion') || qtLower.includes('reason')) {
+      finalQuestionType = 'Assertion Reason';
+    } else if (qtLower.includes('image') || qtLower.includes('diagram') || qtLower.includes('visual')) {
+      finalQuestionType = 'Image Based';
+    } else if (qtLower.includes('clinical')) {
+      finalQuestionType = 'Clinical Scenario';
+    } else if (qtLower.includes('fact') || qtLower.includes('recall')) {
+      finalQuestionType = 'Fact Recall';
+    } else {
+      finalQuestionType = 'Single Best Answer';
+    }
+  } else {
+    finalQuestionType = 'Single Best Answer';
+  }
+
+  return {
+    difficulty: finalDifficulty,
+    clinicalType: finalClinicalType,
+    questionType: finalQuestionType
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Enrich a question with Gemini explanation
 // Falls back to placeholder text gracefully — never throws
 // ─────────────────────────────────────────────────────────────────────────────
@@ -611,16 +681,26 @@ async function enrichWithGemini(apiKey, qNum, cleanText, optA, optB, optC, optD,
         finalSubject = 'Anaesthesia';
       } else if (fsLower === 'general medicine') {
         finalSubject = 'Medicine';
+      } else if (fsLower === 'embryology' || fsLower === 'histology') {
+        finalSubject = 'Anatomy';
       }
     }
+    const normalized = normalizeConstraintFields(
+      geminiData.difficulty,
+      geminiData.clinicalType,
+      geminiData.questionType,
+      classification.difficulty,
+      classification.clinicalType,
+      classification.questionType
+    );
     return {
       explanation: geminiData.explanation,
       subject: finalSubject,
       chapter: geminiData.chapter || classification.chapter,
       topic: geminiData.topic || classification.topic,
-      difficulty: geminiData.difficulty || classification.difficulty,
-      clinicalType: geminiData.clinicalType || classification.clinicalType,
-      questionType: geminiData.questionType || classification.questionType,
+      difficulty: normalized.difficulty,
+      clinicalType: normalized.clinicalType,
+      questionType: normalized.questionType,
       keywords: Array.isArray(geminiData.keywords) ? geminiData.keywords : classification.keywords,
       source: 'Gemini AI'
     };
@@ -799,6 +879,8 @@ async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagra
       classification.subject = 'Anaesthesia';
     } else if (classification.subject.toLowerCase() === 'general medicine') {
       classification.subject = 'Medicine';
+    } else if (classification.subject.toLowerCase() === 'embryology' || classification.subject.toLowerCase() === 'histology') {
+      classification.subject = 'Anatomy';
     }
     if (q.pdfTopic) {
       classification.chapter = q.pdfTopic;
@@ -1554,6 +1636,8 @@ async function processPDFPipeline(uploadId, filePath, fileName) {
           classification.subject = 'Anaesthesia';
         } else if (classification.subject.toLowerCase() === 'general medicine') {
           classification.subject = 'Medicine';
+        } else if (classification.subject.toLowerCase() === 'embryology' || classification.subject.toLowerCase() === 'histology') {
+          classification.subject = 'Anatomy';
         }
         
         if (q.chapter) classification.chapter = q.chapter;
@@ -1694,8 +1778,19 @@ async function enrichPendingQuestions(apiKey, uploadId = null) {
               finalSubject = 'Anaesthesia';
             } else if (fsLower === 'general medicine') {
               finalSubject = 'Medicine';
+            } else if (fsLower === 'embryology' || fsLower === 'histology') {
+              finalSubject = 'Anatomy';
             }
           }
+
+          const normalized = normalizeConstraintFields(
+            expl.difficulty,
+            expl.clinicalType,
+            expl.questionType,
+            q.Difficulty_Level,
+            q.Clinical_or_Conceptual,
+            q.Question_Type
+          );
 
           await dbQuery.run(`
             UPDATE QuestionBank 
@@ -1707,9 +1802,9 @@ async function enrichPendingQuestions(apiKey, uploadId = null) {
             finalSubject,
             expl.chapter || q.Chapter,
             expl.topic || q.Topic,
-            expl.difficulty || q.Difficulty_Level,
-            expl.clinicalType || q.Clinical_or_Conceptual,
-            expl.questionType || q.Question_Type,
+            normalized.difficulty,
+            normalized.clinicalType,
+            normalized.questionType,
             Array.isArray(expl.keywords) ? expl.keywords.join(', ') : q.Keywords,
             q.Question_ID
           ]);
