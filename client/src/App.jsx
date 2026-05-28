@@ -47,9 +47,9 @@ function App() {
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [keyLoadError, setKeyLoadError] = useState('');
   
-  // Authentication & Passcode States
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authChecking, setAuthChecking] = useState(true);
+  // Authentication & Passcode States (Bypassed)
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
+  const [authChecking, setAuthChecking] = useState(false);
   const [passcodeInput, setPasscodeInput] = useState('');
   const [authError, setAuthError] = useState('');
   const [currentPasscode, setCurrentPasscode] = useState('');
@@ -701,14 +701,6 @@ function App() {
             title="Configure System Settings"
           >
             ⚙️ Settings
-          </button>
-          <button 
-            className="nav-tab"
-            onClick={handleLogout}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#ff6b6b' }}
-            title="Logout Session"
-          >
-            🚪 Logout
           </button>
         </nav>
       </header>
@@ -1699,50 +1691,7 @@ function App() {
                 </div>
               </form>
 
-              <form onSubmit={handleSavePasscode} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                    Update System Passcode
-                  </label>
-                  <input 
-                    type="password" 
-                    className="form-control"
-                    placeholder="Current Passcode"
-                    value={currentPasscode}
-                    onChange={(e) => setCurrentPasscode(e.target.value)}
-                    style={{ marginBottom: '0.5rem' }}
-                    required
-                  />
-                  <input 
-                    type="password" 
-                    className="form-control"
-                    placeholder="New Passcode"
-                    value={newPasscode}
-                    onChange={(e) => setNewPasscode(e.target.value)}
-                    required
-                  />
-                  {passcodeSuccessMsg && (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--success-emerald)', marginTop: '0.25rem' }}>
-                      ✓ {passcodeSuccessMsg}
-                    </span>
-                  )}
-                  {passcodeErrorMsg && (
-                    <span style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '0.25rem' }}>
-                      ⚠️ {passcodeErrorMsg}
-                    </span>
-                  )}
-                </div>
-                
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-                  <button 
-                    type="submit" 
-                    className="btn btn-primary"
-                    style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem', border: 'none' }}
-                  >
-                    Update Passcode
-                  </button>
-                </div>
-              </form>
+
             </div>
           </div>
         </div>
