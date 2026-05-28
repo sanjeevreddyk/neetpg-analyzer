@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for neetpg-analyzer on 2026-05-28T06:25:27Z
+# fly.toml app configuration file generated for neetpg-analyzer on 2026-05-28T09:19:53Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -7,7 +7,17 @@ app = 'neetpg-analyzer'
 primary_region = 'bom'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
+
+[env]
+  DATABASE_PATH = '/data/neet_pg_bank_v2.db'
+  NODE_ENV = 'production'
+  PORT = '8080'
+  UPLOAD_DIR = '/data/uploads'
+
+[[mounts]]
+  source = 'neetpg_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 8080
@@ -16,16 +26,6 @@ primary_region = 'bom'
   auto_start_machines = true
   min_machines_running = 0
   processes = ['app']
-
-[[mounts]]
-  source = "neetpg_data"
-  destination = "/data"
-
-[env]
-  NODE_ENV = "production"
-  PORT = "8080"
-  DATABASE_PATH = "/data/neet_pg_bank_v2.db"
-  UPLOAD_DIR = "/data/uploads"
 
 [[vm]]
   memory = '1gb'
