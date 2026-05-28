@@ -6,7 +6,8 @@ const { dbQuery } = require('../config/database');
 const { classifyQuestion } = require('./classificationEngine');
 
 // Ensure image upload directories exist
-const imageDir = path.resolve(__dirname, '../public/uploads/images');
+const uploadBaseDir = process.env.UPLOAD_DIR || path.resolve(__dirname, '../public/uploads');
+const imageDir = path.join(uploadBaseDir, 'images');
 if (!fs.existsSync(imageDir)) {
   fs.mkdirSync(imageDir, { recursive: true });
 }
@@ -683,6 +684,8 @@ async function enrichWithGemini(apiKey, qNum, cleanText, optA, optB, optC, optD,
         finalSubject = 'Medicine';
       } else if (fsLower === 'embryology' || fsLower === 'histology') {
         finalSubject = 'Anatomy';
+      } else if (fsLower === 'obstetrics and gynecology' || fsLower === 'obstetrics & gynecology' || fsLower === 'obstetrics and gynaecology') {
+        finalSubject = 'Gynaecology & Obstetrics';
       }
     }
     const normalized = normalizeConstraintFields(
@@ -881,6 +884,8 @@ async function assignDiagramsAndInsert(parsedQuestions, flatDiagrams, pageDiagra
       classification.subject = 'Medicine';
     } else if (classification.subject.toLowerCase() === 'embryology' || classification.subject.toLowerCase() === 'histology') {
       classification.subject = 'Anatomy';
+    } else if (classification.subject.toLowerCase() === 'obstetrics and gynecology' || classification.subject.toLowerCase() === 'obstetrics & gynecology' || classification.subject.toLowerCase() === 'obstetrics and gynaecology') {
+      classification.subject = 'Gynaecology & Obstetrics';
     }
     if (q.pdfTopic) {
       classification.chapter = q.pdfTopic;
@@ -1638,6 +1643,8 @@ async function processPDFPipeline(uploadId, filePath, fileName) {
           classification.subject = 'Medicine';
         } else if (classification.subject.toLowerCase() === 'embryology' || classification.subject.toLowerCase() === 'histology') {
           classification.subject = 'Anatomy';
+        } else if (classification.subject.toLowerCase() === 'obstetrics and gynecology' || classification.subject.toLowerCase() === 'obstetrics & gynecology' || classification.subject.toLowerCase() === 'obstetrics and gynaecology') {
+          classification.subject = 'Gynaecology & Obstetrics';
         }
         
         if (q.chapter) classification.chapter = q.chapter;
@@ -1780,6 +1787,8 @@ async function enrichPendingQuestions(apiKey, uploadId = null) {
               finalSubject = 'Medicine';
             } else if (fsLower === 'embryology' || fsLower === 'histology') {
               finalSubject = 'Anatomy';
+            } else if (fsLower === 'obstetrics and gynecology' || fsLower === 'obstetrics & gynecology' || fsLower === 'obstetrics and gynaecology') {
+              finalSubject = 'Gynaecology & Obstetrics';
             }
           }
 

@@ -2,7 +2,7 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
 
-const dbPath = path.resolve(__dirname, '../neet_pg_bank_v2.db');
+const dbPath = process.env.DATABASE_PATH || path.resolve(__dirname, '../neet_pg_bank_v2.db');
 
 // Ensure database directory exists
 const dbDir = path.dirname(dbPath);
@@ -168,7 +168,14 @@ async function initDatabase() {
         SET Subject = 'Anatomy' 
         WHERE LOWER(TRIM(Subject)) = 'embryology' OR LOWER(TRIM(Subject)) = 'histology'
       `);
-      console.log('Database migration: Normalized subject names (Anesthesia -> Anaesthesia, General Medicine -> Medicine, Embryology/Histology -> Anatomy).');
+      await dbQuery.run(`
+        UPDATE QuestionBank 
+        SET Subject = 'Gynaecology & Obstetrics' 
+        WHERE LOWER(TRIM(Subject)) = 'obstetrics and gynecology' 
+           OR LOWER(TRIM(Subject)) = 'obstetrics & gynecology' 
+           OR LOWER(TRIM(Subject)) = 'obstetrics and gynaecology'
+      `);
+      console.log('Database migration: Normalized subject names (Anesthesia -> Anaesthesia, General Medicine -> Medicine, Embryology/Histology -> Anatomy, Obstetrics & Gynecology -> Gynaecology & Obstetrics).');
     } catch (e) {
       console.error('Failed to run subject normalization migration:', e);
     }

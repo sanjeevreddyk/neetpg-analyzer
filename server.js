@@ -17,10 +17,10 @@ app.use(cors());
 app.use(express.json());
 
 // Set static files mapping for uploaded images & visual media assets
-app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
+const uploadDir = process.env.UPLOAD_DIR || path.resolve(__dirname, 'public/uploads');
+app.use('/uploads', express.static(uploadDir));
 
 // 1. Establish upload folder directories & multer config
-const uploadDir = path.resolve(__dirname, 'public/uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -690,6 +690,71 @@ app.use((err, req, res, next) => {
   }
   next();
 });
+
+// Serve static client assets in production
+const clientBuildDir = path.resolve(__dirname, 'client/dist');
+if (fs.existsSync(clientBuildDir)) {
+  console.log(`Production Mode: Serving static client files from ${clientBuildDir}`);
+  app.use(express.static(clientBuildDir));
+  app.get('*', (req, res, next) => {
+    if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
+      return res.sendFile(path.join(clientBuildDir, 'index.html'));
+    }
+    next();
+  });
+}
+
+// Production Bootstrap Seeding: Copy local DB and uploads to persistent volume if empty
+if (process.env.NODE_ENV === 'production') {
+  console.log('Production Mode: Verifying persistent storage mounts...');
+  const bootstrapDbPath = path.resolve(__dirname, 'bootstrap_data/neet_pg_bank_v2.db');
+  const bootstrapUploadDir = path.resolve(__dirname, 'bootstrap_data/uploads');
+  const targetDbPath = process.env.DATABASE_PATH || '/data/neet_pg_bank_v2.db';
+  const targetUploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+
+  // Ensure target directories exist
+  const targetDbDir = path.dirname(targetDbPath);
+  if (!fs.existsSync(targetDbDir)) {
+    fs.mkdirSync(targetDbDir, { recursive: true });
+  }
+  if (!fs.existsSync(targetUploadDir)) {
+    fs.mkdirSync(targetUploadDir, { recursive: true });
+  }
+
+  // Seed Database File
+  if (fs.existsSync(bootstrapDbPath) && !fs.existsSync(targetDbPath)) {
+    console.log('Production Bootstrap: Seeding local database file to persistent volume...');
+    try {
+      fs.copyFileSync(bootstrapDbPath, targetDbPath);
+      console.log('Production Bootstrap: Database successfully seeded.');
+    } catch (err) {
+      console.error('Production Bootstrap ERROR: Failed to seed database:', err.message);
+    }
+  }
+
+  // Seed Uploaded Files & Diagrams
+  if (fs.existsSync(bootstrapUploadDir)) {
+    const copyRecursive = (src, dest) => {
+      if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+      fs.readdirSync(src).forEach(file => {
+        const srcFile = path.join(src, file);
+        const destFile = path.join(dest, file);
+        if (fs.statSync(srcFile).isDirectory()) {
+          copyRecursive(srcFile, destFile);
+        } else if (!fs.existsSync(destFile)) {
+          try {
+            fs.copyFileSync(srcFile, destFile);
+          } catch (err) {
+            console.error(`Production Bootstrap ERROR: Failed to copy asset ${file}:`, err.message);
+          }
+        }
+      });
+    };
+    console.log('Production Bootstrap: Seeding uploaded media assets to persistent volume...');
+    copyRecursive(bootstrapUploadDir, targetUploadDir);
+    console.log('Production Bootstrap: Uploaded assets successfully seeded.');
+  }
+}
 
 // Initialize database schema first, then activate express listener
 initDatabase().then(() => {
