@@ -1,41 +1,44 @@
-# Stage 1: Build React/Vite Frontend
-FROM node:20-slim AS client-builder
-WORKDIR /app/client
-COPY client/package*.json ./
-RUN npm install
-COPY client/ ./
-RUN npm run build
+# syntax = docker/dockerfile:1
 
-# Stage 2: Production Server Environment
-FROM node:20-slim
+# Adjust NODE_VERSION as desired
+ARG NODE_VERSION=22.21.1
+FROM node:${NODE_VERSION}-slim AS base
+
+LABEL fly_launch_runtime="Node.js"
+
+# Node.js app lives here
 WORKDIR /app
 
-# Install native compilation dependencies for SQLite3 package if needed
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+# Set production environment
+ENV NODE_ENV="production"
 
-COPY package*.json ./
-RUN npm install --omit=dev
 
-COPY config/ ./config/
-COPY services/ ./services/
-COPY server.js ./
+# Throw-away build stage to reduce size of final image
+FROM base AS build
 
-# Copy local SQLite DB and uploads into bootstrap_data for seeding on first boot
-COPY neet_pg_bank_v2.db ./bootstrap_data/neet_pg_bank_v2.db
-COPY public/uploads/ ./bootstrap_data/uploads/
+# Install packages needed to build node modules
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3
 
-# Copy compiled static assets from client builder stage
-COPY --from=client-builder /app/client/dist ./client/dist
+# Install node modules
+COPY package-lock.json package.json ./
+RUN npm ci
 
-# Expose backend port and set production environment configuration
-ENV NODE_ENV=production
-ENV PORT=5000
-ENV DATABASE_PATH=/data/neet_pg_bank_v2.db
-ENV UPLOAD_DIR=/data/uploads
+# Copy application code
+COPY . .
 
-EXPOSE 5000
 
-# Ensure persistent mount directory exists locally inside the container
+# Final stage for app image
+FROM base
+
+# Copy built application
+COPY --from=build /app /app
+
+# Setup sqlite3 on a separate volume
 RUN mkdir -p /data
+VOLUME /data
 
-CMD ["node", "server.js"]
+# Start the server by default, this can be overwritten at runtime
+EXPOSE 3000
+ENV DATABASE_URL="file:///data/sqlite.db"
+CMD [ "npm", "run", "start" ]
