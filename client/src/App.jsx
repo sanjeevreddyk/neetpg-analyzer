@@ -47,11 +47,31 @@ function App() {
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [keyLoadError, setKeyLoadError] = useState('');
   
+  // Authentication & Passcode States
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [currentPasscode, setCurrentPasscode] = useState('');
+  const [newPasscode, setNewPasscode] = useState('');
+  const [passcodeSuccessMsg, setPasscodeSuccessMsg] = useState('');
+  const [passcodeErrorMsg, setPasscodeErrorMsg] = useState('');
+  
   const fileInputRef = useRef(null);
   const logsEndRef = useRef(null);
 
+  // 1. Authenticate check on mount
+  useEffect(() => {
+    const savedToken = localStorage.getItem('session_token_neetpg');
+    if (savedToken === 'session_token_neetpg') {
+      setIsAuthenticated(true);
+    }
+    setAuthChecking(false);
+  }, []);
+
   // Initialize and poll data
   useEffect(() => {
+    if (!isAuthenticated) return;
     fetchHistory();
     fetchQuestions();
     fetchSummaryStats();
@@ -65,10 +85,11 @@ function App() {
     }, 3000);
     
     return () => clearInterval(interval);
-  }, []);
+  }, [isAuthenticated]);
 
   // Handle SPA Hash Routing
   useEffect(() => {
+    if (!isAuthenticated) return;
     const handleHashChange = () => {
       const hash = window.location.hash;
       if (hash === '#/dashboard') {
@@ -80,32 +101,31 @@ function App() {
       } else if (hash === '#/console') {
         setActiveTab('settings');
       } else {
-        // Fallback or default
         window.location.hash = '#/dashboard';
         setActiveTab('dashboard');
       }
     };
 
-    // Run once on mount
     handleHashChange();
-
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  }, [isAuthenticated]);
 
   // Fetch trends when analytics tab becomes active
   useEffect(() => {
+    if (!isAuthenticated) return;
     if (activeTab === 'analytics') {
       fetchTrendsMatrix();
     }
-  }, [activeTab]);
+  }, [activeTab, isAuthenticated]);
 
   // Re-fetch questions when filters or active tab changes (Auto-Refresh)
   useEffect(() => {
+    if (!isAuthenticated) return;
     if (activeTab === 'questions') {
       fetchQuestions();
     }
-  }, [activeTab, subjectFilter, difficultyFilter, yearFilter, uploadFilter, imageFilter, searchTerm, page, itemsPerPage]);
+  }, [activeTab, subjectFilter, difficultyFilter, yearFilter, uploadFilter, imageFilter, searchTerm, page, itemsPerPage, isAuthenticated]);
 
   // Scroll logs console to bottom
   useEffect(() => {
@@ -113,6 +133,56 @@ function App() {
       logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs]);
+
+  const handleLoginSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passcodeInput })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        localStorage.setItem('session_token_neetpg', 'session_token_neetpg');
+        setIsAuthenticated(true);
+      } else {
+        setAuthError(data.error || 'Authentication Failed: Incorrect passcode!');
+      }
+    } catch (err) {
+      setAuthError('Network error: Could not reach the authentication service.');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('session_token_neetpg');
+    setIsAuthenticated(false);
+    setPasscodeInput('');
+  };
+
+  const handleSavePasscode = async (e) => {
+    e.preventDefault();
+    setPasscodeSuccessMsg('');
+    setPasscodeErrorMsg('');
+    try {
+      const response = await fetch('/api/settings/admin_password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: currentPasscode, newPassword: newPasscode })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setPasscodeSuccessMsg('Passcode successfully updated!');
+        setCurrentPasscode('');
+        setNewPasscode('');
+      } else {
+        setPasscodeErrorMsg(data.error || 'Failed to update passcode.');
+      }
+    } catch (err) {
+      setPasscodeErrorMsg('Network error: Could not connect to update passcode.');
+    }
+  };
 
   // ==========================================
   // API FETCH CALLS
@@ -533,6 +603,56 @@ function App() {
     });
   };
 
+  if (authChecking) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'radial-gradient(circle at top right, #1d1b26, #0c0a0f)', color: '#fff' }}>
+        <h3>⚡ Loading secure environment...</h3>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'radial-gradient(circle at top right, #1d1b26, #0c0a0f)', color: '#fff', padding: '1rem' }}>
+        <div className="glass-card" style={{ maxWidth: '400px', width: '100%', padding: '2.5rem', borderRadius: '16px', display: 'flex', flexDirection: 'column', gap: '1.5rem', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.05)', backdropFilter: 'blur(12px)' }}>
+          <div style={{ textAlign: 'center' }}>
+            <span style={{ fontSize: '3rem' }}>🔒</span>
+            <h2 style={{ fontFamily: 'var(--font-display)', marginTop: '0.5rem', color: '#fff' }}>Secure Portal</h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+              Enter the administration passcode to access the NEET PG Question Analyzer.
+            </p>
+          </div>
+          
+          <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Passcode
+              </label>
+              <input 
+                type="password" 
+                className="form-control"
+                placeholder="Enter passcode..."
+                value={passcodeInput}
+                onChange={(e) => setPasscodeInput(e.target.value)}
+                required
+                autoFocus
+              />
+              {authError && (
+                <span style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '0.25rem' }}>
+                  ⚠️ {authError}
+                </span>
+              )}
+            </div>
+            
+            <button type="submit" className="btn btn-cyan" style={{ padding: '0.75rem', borderRadius: '8px', border: 'none', fontWeight: 600 }}>
+              Unlock Dashboard
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Header Bar */}
@@ -581,6 +701,14 @@ function App() {
             title="Configure System Settings"
           >
             ⚙️ Settings
+          </button>
+          <button 
+            className="nav-tab"
+            onClick={handleLogout}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: '#ff6b6b' }}
+            title="Logout Session"
+          >
+            🚪 Logout
           </button>
         </nav>
       </header>
@@ -1520,7 +1648,7 @@ function App() {
                 </div>
               </div>
               
-              <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '1.5rem' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
                     Google Gemini API Key
@@ -1567,6 +1695,51 @@ function App() {
                     disabled={isSavingKey}
                   >
                     {isSavingKey ? 'Saving...' : geminiKeyExists ? 'Update Key' : 'Save Key'}
+                  </button>
+                </div>
+              </form>
+
+              <form onSubmit={handleSavePasscode} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                    Update System Passcode
+                  </label>
+                  <input 
+                    type="password" 
+                    className="form-control"
+                    placeholder="Current Passcode"
+                    value={currentPasscode}
+                    onChange={(e) => setCurrentPasscode(e.target.value)}
+                    style={{ marginBottom: '0.5rem' }}
+                    required
+                  />
+                  <input 
+                    type="password" 
+                    className="form-control"
+                    placeholder="New Passcode"
+                    value={newPasscode}
+                    onChange={(e) => setNewPasscode(e.target.value)}
+                    required
+                  />
+                  {passcodeSuccessMsg && (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--success-emerald)', marginTop: '0.25rem' }}>
+                      ✓ {passcodeSuccessMsg}
+                    </span>
+                  )}
+                  {passcodeErrorMsg && (
+                    <span style={{ fontSize: '0.75rem', color: '#ff6b6b', marginTop: '0.25rem' }}>
+                      ⚠️ {passcodeErrorMsg}
+                    </span>
+                  )}
+                </div>
+                
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary"
+                    style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem', border: 'none' }}
+                  >
+                    Update Passcode
                   </button>
                 </div>
               </form>

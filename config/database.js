@@ -122,6 +122,17 @@ async function initDatabase() {
       );
     `);
 
+    // Seed default admin passcode if not present
+    try {
+      const hasPasscode = await dbQuery.get("SELECT 1 FROM SystemSettings WHERE Setting_Key = 'admin_password'");
+      if (!hasPasscode) {
+        await dbQuery.run("INSERT INTO SystemSettings (Setting_Key, Setting_Value) VALUES ('admin_password', 'NeetPG2026!')");
+        console.log('Database migration: Seeded default admin passcode.');
+      }
+    } catch (e) {
+      console.error('Failed to seed default admin passcode:', e);
+    }
+
     // Index creations
     await dbQuery.run(`CREATE INDEX IF NOT EXISTS IDX_QB_Subject ON QuestionBank(Subject);`);
     await dbQuery.run(`CREATE INDEX IF NOT EXISTS IDX_QB_Upload ON QuestionBank(Upload_ID);`);

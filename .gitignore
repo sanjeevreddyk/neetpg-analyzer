@@ -1,3 +1,6 @@
 node_modules/
 client/node_modules/
 logs/
+*.db-shm
+*.db-wal
+*.db-journal

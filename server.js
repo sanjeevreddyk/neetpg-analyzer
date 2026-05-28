@@ -676,6 +676,56 @@ app.post('/api/settings/gemini_api_key', async (req, res) => {
   }
 });
 
+/**
+ * 13. POST /api/auth/login
+ * Validates the admin passcode against SystemSettings
+ */
+app.post('/api/auth/login', async (req, res) => {
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: 'Passcode is required.' });
+  }
+  try {
+    const row = await dbQuery.get("SELECT Setting_Value FROM SystemSettings WHERE Setting_Key = 'admin_password'");
+    const storedPassword = row ? row.Setting_Value : 'NeetPG2026!';
+    if (password === storedPassword) {
+      res.status(200).json({ success: true, token: 'session_token_neetpg' });
+    } else {
+      res.status(401).json({ error: 'Authentication Failed: Incorrect passcode!' });
+    }
+  } catch (error) {
+    logToExecutionFile('ERROR', `Authentication endpoint error: ${error.message}`);
+    res.status(500).json({ error: `Login error: ${error.message}` });
+  }
+});
+
+/**
+ * 14. POST /api/settings/admin_password
+ * Updates the admin passcode in SystemSettings
+ */
+app.post('/api/settings/admin_password', async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current and new passcodes are required.' });
+  }
+  try {
+    const row = await dbQuery.get("SELECT Setting_Value FROM SystemSettings WHERE Setting_Key = 'admin_password'");
+    const storedPassword = row ? row.Setting_Value : 'NeetPG2026!';
+    if (currentPassword !== storedPassword) {
+      return res.status(400).json({ error: 'Validation Failure: Current passcode is incorrect!' });
+    }
+    await dbQuery.run(
+      "INSERT OR REPLACE INTO SystemSettings (Setting_Key, Setting_Value) VALUES ('admin_password', ?)",
+      [newPassword.trim()]
+    );
+    logToExecutionFile('INFO', 'Admin passcode successfully updated in database.');
+    res.status(200).json({ success: true, message: 'Passcode successfully updated.' });
+  } catch (error) {
+    logToExecutionFile('ERROR', `Failed to update admin passcode: ${error.message}`);
+    res.status(500).json({ error: `Failed to update passcode: ${error.message}` });
+  }
+});
+
 // Global Error Handler for upload limits or system disruptions
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
