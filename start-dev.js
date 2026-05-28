@@ -24,7 +24,8 @@ backend.stderr.on('data', (data) => {
 // 2. Spawning Frontend Dev Server (Port 3000)
 const frontend = spawn(npmCmd, ['run', 'dev'], {
   cwd: path.join(__dirname, 'client'),
-  stdio: ['pipe', 'pipe', 'pipe']
+  stdio: ['pipe', 'pipe', 'pipe'],
+  shell: true
 });
 
 let browserOpened = false;
