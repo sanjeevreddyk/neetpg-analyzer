@@ -23,8 +23,18 @@ if (process.env.NODE_ENV === 'production') {
   }
 
   // Seed Database File
-  if (fs.existsSync(bootstrapDbPath) && !fs.existsSync(targetDbPath)) {
-    console.log('Production Bootstrap: Seeding local database file to persistent volume...');
+  const dbExists = fs.existsSync(targetDbPath);
+  let dbSize = 0;
+  if (dbExists) {
+    try {
+      dbSize = fs.statSync(targetDbPath).size;
+    } catch (e) {
+      dbSize = 0;
+    }
+  }
+
+  if (fs.existsSync(bootstrapDbPath) && (!dbExists || dbSize < 100 * 1024)) {
+    console.log('Production Bootstrap: Seeding local database file to persistent volume (empty/missing database detected)...');
     try {
       fs.copyFileSync(bootstrapDbPath, targetDbPath);
       console.log('Production Bootstrap: Database successfully seeded.');
